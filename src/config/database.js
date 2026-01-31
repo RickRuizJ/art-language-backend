@@ -17,4 +17,5 @@ const sequelize = new Sequelize(process.env.DATABASE_URL || 'postgresql://localh
   }
 });
 
-module.exports = { sequelize };
+module.exports = sequelize;
+
