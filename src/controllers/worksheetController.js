@@ -35,7 +35,7 @@ exports.getWorksheets = async (req, res) => {
         as: 'creator',
         attributes: ['id', 'firstName', 'lastName', 'email']
       }],
-      order: [['createdAt', 'DESC']]
+      order: [['created_at', 'DESC']]
     });
 
     res.json({

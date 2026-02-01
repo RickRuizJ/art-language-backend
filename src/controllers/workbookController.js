@@ -45,7 +45,7 @@ exports.getAllWorkbooks = async (req, res) => {
       ],
       order: [
         ['displayOrder', 'ASC'],
-        ['createdAt', 'DESC'],
+        ['created_at', 'DESC'],
         [{ model: Worksheet, as: 'worksheets' }, WorkbookWorksheet, 'displayOrder', 'ASC']
       ]
     });

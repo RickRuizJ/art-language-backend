@@ -19,7 +19,7 @@ router.get('/', roleCheck('admin', 'teacher'), async (req, res) => {
     const users = await User.findAll({
       where,
       attributes: { exclude: ['password'] },
-      order: [['createdAt', 'DESC']]
+      order: [['created_at', 'DESC']]
     });
 
     res.json({ success: true, data: { users } });

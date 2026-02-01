@@ -60,10 +60,7 @@ const Worksheet = sequelize.define('Worksheet', {
     field: 'is_published'
   }
 }, {
-  tableName: 'worksheets',
-  timestamps: true,
-  createdAt: 'created_at',
-  updatedAt: 'updated_at'
+  tableName: 'worksheets'
 });
 
 // ─── CRITICAL: Association required by worksheetController includes ──────────

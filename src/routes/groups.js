@@ -35,7 +35,7 @@ router.get('/', async (req, res) => {
           }]
         }
       ],
-      order: [['createdAt', 'DESC']]
+      order: [['created_at', 'DESC']]
     });
 
     res.json({ success: true, data: { groups } });
