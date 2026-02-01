@@ -1,5 +1,6 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
+const User = require('./User');
 
 const Worksheet = sequelize.define('Worksheet', {
   id: {
@@ -61,5 +62,8 @@ const Worksheet = sequelize.define('Worksheet', {
 }, {
   tableName: 'worksheets'
 });
+
+// ─── Association (required by worksheetController includes) ──────────────────
+Worksheet.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' });
 
 module.exports = Worksheet;

@@ -1,5 +1,6 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
+const User = require('./User');
 
 const Group = sequelize.define('Group', {
   id: {
@@ -72,5 +73,10 @@ const GroupMember = sequelize.define('GroupMember', {
   tableName: 'group_members',
   timestamps: false
 });
+
+// ─── Associations (required by routes/groups.js includes) ────────────────────
+Group.belongsTo(User, { foreignKey: 'teacherId', as: 'teacher' });
+Group.hasMany(GroupMember, { foreignKey: 'groupId', as: 'members' });
+GroupMember.belongsTo(User, { foreignKey: 'studentId', as: 'student' });
 
 module.exports = { Group, GroupMember };

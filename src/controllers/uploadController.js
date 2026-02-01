@@ -1,37 +1,234 @@
-// backend/src/controllers/uploadController.js
+const multer = require('multer');
+const { v4: uuidv4 } = require('uuid');
+const Worksheet = require('../models/Worksheet');
+const { FileUpload, WorkbookWorksheet } = require('../models/Workbook');
 
-exports.uploadWorksheet = async (req, res) => {
-  try {
-    return res.status(501).json({
-      success: false,
-      message: 'Upload endpoint not implemented yet'
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false });
-  }
+// ─── Multer — memory storage (no disk writes; Railway has no persistent FS) ─
+const ALLOWED_MIMES = {
+  'application/pdf': '.pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+  'application/msword': '.doc',
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
 };
 
+const upload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (req, file, cb) => {
+    if (ALLOWED_MIMES[file.mimetype]) {
+      cb(null, true);
+    } else {
+      cb(new Error('File type not supported. Allowed: PDF, DOCX, DOC, PNG, JPG, GIF, WEBP'), false);
+    }
+  },
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+});
+
+// ─── Helper ───────────────────────────────────────────────────────────────────
+function bufferToDataUrl(buffer, mimetype) {
+  return `data:${mimetype};base64,${buffer.toString('base64')}`;
+}
+
+// ─── POST /api/worksheets/upload ──────────────────────────────────────────────
+// Receives multipart/form-data { file, title, description?, subject?, gradeLevel?, workbookId? }
+// Stores file as base64 data-URL in file_uploads.file_path (zero external-storage config).
+// Creates a Worksheet row that the teacher dashboard already lists.
+exports.uploadWorksheet = [
+  upload.single('file'),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: 'No file uploaded. Please select a file.',
+        });
+      }
+
+      const { title, description, subject, gradeLevel, workbookId } = req.body;
+
+      if (!title || !title.trim()) {
+        return res.status(400).json({ success: false, message: 'Title is required.' });
+      }
+
+      const fileId   = uuidv4();
+      const ext      = ALLOWED_MIMES[req.file.mimetype] || '';
+      const filename = `${fileId}${ext}`;
+      const dataUrl  = bufferToDataUrl(req.file.buffer, req.file.mimetype);
+
+      // 1) Persist file record
+      const fileRecord = await FileUpload.create({
+        id: fileId,
+        filename,
+        originalFilename: req.file.originalname,
+        filePath: dataUrl,
+        fileSize: req.file.size,
+        mimeType: req.file.mimetype,
+        uploadedBy: req.user.id,
+        entityType: 'worksheet',
+        isPublic: false,
+      });
+
+      // 2) Create the worksheet
+      const worksheet = await Worksheet.create({
+        title: title.trim(),
+        description: description ? description.trim() : null,
+        subject: subject || null,
+        gradeLevel: gradeLevel || null,
+        createdBy: req.user.id,
+        isPublished: false,
+        questions: [],       // uploaded files have no interactive questions
+        autoGrade: false,
+        difficulty: 'beginner',
+      });
+
+      // 3) Link file → worksheet
+      await fileRecord.update({ entityId: worksheet.id });
+
+      // 4) Optionally add to a workbook
+      if (workbookId) {
+        const maxOrder = await WorkbookWorksheet.max('displayOrder', { where: { workbookId } });
+        await WorkbookWorksheet.create({
+          workbookId,
+          worksheetId: worksheet.id,
+          displayOrder: (maxOrder || 0) + 1,
+        });
+      }
+
+      res.status(201).json({
+        success: true,
+        message: 'Worksheet uploaded successfully',
+        data: {
+          worksheet: {
+            ...worksheet.toJSON(),
+            file: {
+              id: fileRecord.id,
+              originalFilename: fileRecord.originalFilename,
+              mimeType: fileRecord.mimeType,
+              fileSize: fileRecord.fileSize,
+            },
+          },
+        },
+      });
+    } catch (error) {
+      console.error('Upload worksheet error:', error);
+      if (error.message && error.message.includes('File type not supported')) {
+        return res.status(400).json({ success: false, message: error.message });
+      }
+      res.status(500).json({ success: false, message: 'Upload failed' });
+    }
+  },
+];
+
+// ─── POST /api/worksheets/google-link ─────────────────────────────────────────
+// Body: { title, url, description?, subject?, gradeLevel?, workbookId? }
+// Validates Google URL, detects type, builds an embed URL, stores everything
+// in the worksheet's questions JSONB so it's self-contained.
 exports.saveGoogleLink = async (req, res) => {
   try {
-    return res.status(501).json({
-      success: false,
-      message: 'Google link endpoint not implemented yet'
+    const { title, url, description, subject, gradeLevel, workbookId } = req.body;
+
+    if (!title || !title.trim()) {
+      return res.status(400).json({ success: false, message: 'Title is required.' });
+    }
+    if (!url || !url.trim()) {
+      return res.status(400).json({ success: false, message: 'Google link is required.' });
+    }
+
+    const googlePattern = /^https:\/\/(docs\.google\.com|sheets\.google\.com|slides\.google\.com)\//i;
+    if (!googlePattern.test(url.trim())) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid Google link. Please use a valid Google Docs, Sheets, or Slides URL.',
+      });
+    }
+
+    // Detect type
+    let googleType = 'doc';
+    if (url.includes('sheets.google.com'))  googleType = 'sheet';
+    if (url.includes('slides.google.com'))  googleType = 'slide';
+
+    // Build embed URL (strip /edit, append the right pub param)
+    let embedUrl = url.trim().replace(/\/edit.*$/, '').replace(/\/$/, '');
+    if (!embedUrl.includes('/pub') && !embedUrl.includes('/embed')) {
+      if (googleType === 'doc')   embedUrl += '/pub?embedded=true';
+      if (googleType === 'sheet') embedUrl += '/pub?output=html';
+      if (googleType === 'slide') embedUrl += '/embed';
+    }
+
+    const typeLabel = { doc: 'Doc', sheet: 'Sheet', slide: 'Slide' };
+
+    // Create worksheet — questions field carries the Google metadata
+    const worksheet = await Worksheet.create({
+      title: title.trim(),
+      description: description ? description.trim() : `Google ${typeLabel[googleType]}`,
+      subject: subject || null,
+      gradeLevel: gradeLevel || null,
+      createdBy: req.user.id,
+      isPublished: false,
+      questions: [{
+        type: 'google_embed',
+        googleType,
+        originalUrl: url.trim(),
+        embedUrl,
+      }],
+      autoGrade: false,
+      difficulty: 'beginner',
+    });
+
+    // Optionally add to a workbook
+    if (workbookId) {
+      const maxOrder = await WorkbookWorksheet.max('displayOrder', { where: { workbookId } });
+      await WorkbookWorksheet.create({
+        workbookId,
+        worksheetId: worksheet.id,
+        displayOrder: (maxOrder || 0) + 1,
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Google link saved successfully',
+      data: {
+        worksheet: worksheet.toJSON(),
+        googleType,
+        embedUrl,
+      },
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false });
+    console.error('Save Google link error:', error);
+    res.status(500).json({ success: false, message: 'Failed to save Google link' });
   }
 };
 
+// ─── GET /api/worksheets/:id/file ─────────────────────────────────────────────
+// Returns the base64 data-URL for an uploaded file so the frontend can render it.
 exports.getWorksheetFile = async (req, res) => {
   try {
-    return res.status(404).json({
-      success: false,
-      message: 'File not found'
+    const fileRecord = await FileUpload.findOne({
+      where: {
+        entityType: 'worksheet',
+        entityId: req.params.id,
+      },
+    });
+
+    if (!fileRecord) {
+      return res.status(404).json({ success: false, message: 'File not found' });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        id: fileRecord.id,
+        originalFilename: fileRecord.originalFilename,
+        mimeType: fileRecord.mimeType,
+        fileSize: fileRecord.fileSize,
+        dataUrl: fileRecord.filePath,
+      },
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false });
+    console.error('Get file error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch file' });
   }
 };
