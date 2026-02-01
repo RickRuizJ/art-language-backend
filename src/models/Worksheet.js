@@ -63,7 +63,10 @@ const Worksheet = sequelize.define('Worksheet', {
   tableName: 'worksheets'
 });
 
-// ─── Association (required by worksheetController includes) ──────────────────
-Worksheet.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' });
+// ─── CRITICAL: Association required by worksheetController includes ──────────
+Worksheet.belongsTo(User, { 
+  foreignKey: 'createdBy', 
+  as: 'creator' 
+});
 
 module.exports = Worksheet;

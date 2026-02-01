@@ -74,9 +74,12 @@ const GroupMember = sequelize.define('GroupMember', {
   timestamps: false
 });
 
-// ─── Associations (required by routes/groups.js includes) ────────────────────
+// ─── FIXED: Complete bidirectional associations ──────────────────────────────
 Group.belongsTo(User, { foreignKey: 'teacherId', as: 'teacher' });
-Group.hasMany(GroupMember, { foreignKey: 'groupId', as: 'members' });
+Group.hasMany(GroupMember, { foreignKey: 'groupId', as: 'members', onDelete: 'CASCADE' });
+
+// CRITICAL FIX: Add missing inverse association
+GroupMember.belongsTo(Group, { foreignKey: 'groupId', as: 'group' });
 GroupMember.belongsTo(User, { foreignKey: 'studentId', as: 'student' });
 
 module.exports = { Group, GroupMember };

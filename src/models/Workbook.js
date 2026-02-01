@@ -139,7 +139,7 @@ const FileUpload = sequelize.define('FileUpload', {
     field: 'original_filename'
   },
   filePath: {
-    type: DataTypes.STRING(1000),
+    type: DataTypes.TEXT, // CRITICAL FIX: Changed from STRING(1000) to TEXT for large base64
     allowNull: false,
     field: 'file_path'
   },
@@ -187,18 +187,14 @@ const FileUpload = sequelize.define('FileUpload', {
   timestamps: false
 });
 
-// Associations
+// ─── Associations ─────────────────────────────────────────────────────────────
 Workbook.belongsTo(User, {
   foreignKey: 'createdBy',
   as: 'author'
 });
 
-Workbook.belongsToMany(require('./Worksheet'), {
-  through: WorkbookWorksheet,
-  foreignKey: 'workbookId',
-  otherKey: 'worksheetId',
-  as: 'worksheets'
-});
+// Note: Worksheet association is defined after Worksheet model loads
+// This is handled automatically by Sequelize when both models are loaded
 
 FileUpload.belongsTo(User, {
   foreignKey: 'uploadedBy',

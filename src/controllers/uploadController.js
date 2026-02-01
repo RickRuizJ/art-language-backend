@@ -1,7 +1,7 @@
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const Worksheet = require('../models/Worksheet');
-const { FileUpload, WorkbookWorksheet } = require('../models/Workbook');
+const { FileUpload, WorkbookWorksheet, Workbook } = require('../models/Workbook');
 
 // ─── Multer — memory storage (no disk writes; Railway has no persistent FS) ─
 const ALLOWED_MIMES = {
@@ -31,10 +31,42 @@ function bufferToDataUrl(buffer, mimetype) {
   return `data:${mimetype};base64,${buffer.toString('base64')}`;
 }
 
+// ─── CRITICAL FIX: Ensure workbook exists or create default ──────────────────
+async function ensureWorkbook(workbookId, userId) {
+  if (workbookId) {
+    // Verify workbook exists and user has access
+    const workbook = await Workbook.findOne({
+      where: { id: workbookId, createdBy: userId }
+    });
+    if (!workbook) {
+      throw new Error('Workbook not found or access denied');
+    }
+    return workbookId;
+  }
+
+  // CRITICAL: Create or get default workbook (worksheets MUST belong to a workbook)
+  let defaultWorkbook = await Workbook.findOne({
+    where: { 
+      createdBy: userId,
+      title: 'Mis Worksheets'
+    }
+  });
+
+  if (!defaultWorkbook) {
+    defaultWorkbook = await Workbook.create({
+      title: 'Mis Worksheets',
+      description: 'Worksheets sin organizar',
+      createdBy: userId,
+      status: 'draft',
+      isActive: true
+    });
+  }
+
+  return defaultWorkbook.id;
+}
+
 // ─── POST /api/worksheets/upload ──────────────────────────────────────────────
-// Receives multipart/form-data { file, title, description?, subject?, gradeLevel?, workbookId? }
-// Stores file as base64 data-URL in file_uploads.file_path (zero external-storage config).
-// Creates a Worksheet row that the teacher dashboard already lists.
+// FIXED: Better error handling, ensure workbook link, validate file size
 exports.uploadWorksheet = [
   upload.single('file'),
   async (req, res) => {
@@ -52,10 +84,24 @@ exports.uploadWorksheet = [
         return res.status(400).json({ success: false, message: 'Title is required.' });
       }
 
+      // CRITICAL FIX: Ensure file is not too large for base64 storage
+      if (req.file.size > 5 * 1024 * 1024) { // 5MB limit for base64
+        return res.status(400).json({ 
+          success: false, 
+          message: 'File too large for upload. Maximum size is 5MB.' 
+        });
+      }
+
       const fileId   = uuidv4();
       const ext      = ALLOWED_MIMES[req.file.mimetype] || '';
       const filename = `${fileId}${ext}`;
       const dataUrl  = bufferToDataUrl(req.file.buffer, req.file.mimetype);
+
+      console.log(`[UPLOAD] User ${req.user.id} uploading file: ${req.file.originalname} (${req.file.size} bytes)`);
+
+      // CRITICAL FIX: Ensure workbook exists
+      const finalWorkbookId = await ensureWorkbook(workbookId, req.user.id);
+      console.log(`[UPLOAD] Assigned to workbook: ${finalWorkbookId}`);
 
       // 1) Persist file record
       const fileRecord = await FileUpload.create({
@@ -83,18 +129,23 @@ exports.uploadWorksheet = [
         difficulty: 'beginner',
       });
 
+      console.log(`[UPLOAD] Created worksheet: ${worksheet.id}`);
+
       // 3) Link file → worksheet
       await fileRecord.update({ entityId: worksheet.id });
 
-      // 4) Optionally add to a workbook
-      if (workbookId) {
-        const maxOrder = await WorkbookWorksheet.max('displayOrder', { where: { workbookId } });
-        await WorkbookWorksheet.create({
-          workbookId,
-          worksheetId: worksheet.id,
-          displayOrder: (maxOrder || 0) + 1,
-        });
-      }
+      // 4) CRITICAL FIX: ALWAYS link to workbook
+      const maxOrder = await WorkbookWorksheet.max('displayOrder', { 
+        where: { workbookId: finalWorkbookId } 
+      });
+      
+      await WorkbookWorksheet.create({
+        workbookId: finalWorkbookId,
+        worksheetId: worksheet.id,
+        displayOrder: (maxOrder || 0) + 1,
+      });
+
+      console.log(`[UPLOAD] Linked worksheet ${worksheet.id} to workbook ${finalWorkbookId}`);
 
       res.status(201).json({
         success: true,
@@ -108,23 +159,31 @@ exports.uploadWorksheet = [
               mimeType: fileRecord.mimeType,
               fileSize: fileRecord.fileSize,
             },
+            workbookId: finalWorkbookId,
           },
         },
       });
     } catch (error) {
-      console.error('Upload worksheet error:', error);
+      console.error('[UPLOAD ERROR]', error);
+      
       if (error.message && error.message.includes('File type not supported')) {
         return res.status(400).json({ success: false, message: error.message });
       }
-      res.status(500).json({ success: false, message: 'Upload failed' });
+      
+      if (error.message && error.message.includes('Workbook not found')) {
+        return res.status(404).json({ success: false, message: error.message });
+      }
+      
+      res.status(500).json({ 
+        success: false, 
+        message: 'Upload failed. Please try again.' 
+      });
     }
   },
 ];
 
 // ─── POST /api/worksheets/google-link ─────────────────────────────────────────
-// Body: { title, url, description?, subject?, gradeLevel?, workbookId? }
-// Validates Google URL, detects type, builds an embed URL, stores everything
-// in the worksheet's questions JSONB so it's self-contained.
+// FIXED: Ensure workbook link, better validation
 exports.saveGoogleLink = async (req, res) => {
   try {
     const { title, url, description, subject, gradeLevel, workbookId } = req.body;
@@ -143,6 +202,12 @@ exports.saveGoogleLink = async (req, res) => {
         message: 'Invalid Google link. Please use a valid Google Docs, Sheets, or Slides URL.',
       });
     }
+
+    console.log(`[GOOGLE LINK] User ${req.user.id} saving link: ${url.substring(0, 50)}...`);
+
+    // CRITICAL FIX: Ensure workbook exists
+    const finalWorkbookId = await ensureWorkbook(workbookId, req.user.id);
+    console.log(`[GOOGLE LINK] Assigned to workbook: ${finalWorkbookId}`);
 
     // Detect type
     let googleType = 'doc';
@@ -177,15 +242,20 @@ exports.saveGoogleLink = async (req, res) => {
       difficulty: 'beginner',
     });
 
-    // Optionally add to a workbook
-    if (workbookId) {
-      const maxOrder = await WorkbookWorksheet.max('displayOrder', { where: { workbookId } });
-      await WorkbookWorksheet.create({
-        workbookId,
-        worksheetId: worksheet.id,
-        displayOrder: (maxOrder || 0) + 1,
-      });
-    }
+    console.log(`[GOOGLE LINK] Created worksheet: ${worksheet.id}`);
+
+    // CRITICAL FIX: ALWAYS add to workbook
+    const maxOrder = await WorkbookWorksheet.max('displayOrder', { 
+      where: { workbookId: finalWorkbookId } 
+    });
+    
+    await WorkbookWorksheet.create({
+      workbookId: finalWorkbookId,
+      worksheetId: worksheet.id,
+      displayOrder: (maxOrder || 0) + 1,
+    });
+
+    console.log(`[GOOGLE LINK] Linked worksheet ${worksheet.id} to workbook ${finalWorkbookId}`);
 
     res.status(201).json({
       success: true,
@@ -194,10 +264,16 @@ exports.saveGoogleLink = async (req, res) => {
         worksheet: worksheet.toJSON(),
         googleType,
         embedUrl,
+        workbookId: finalWorkbookId,
       },
     });
   } catch (error) {
-    console.error('Save Google link error:', error);
+    console.error('[GOOGLE LINK ERROR]', error);
+    
+    if (error.message && error.message.includes('Workbook not found')) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
+    
     res.status(500).json({ success: false, message: 'Failed to save Google link' });
   }
 };
