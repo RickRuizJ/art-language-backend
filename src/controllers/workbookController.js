@@ -1,5 +1,5 @@
 const { Workbook, WorkbookWorksheet } = require('../models/Workbook');
-const { Worksheet } = require('../models/Worksheet');
+const Worksheet = require('../models/Worksheet');
 const User = require('../models/User');
 const sequelize = require('../config/database');
 

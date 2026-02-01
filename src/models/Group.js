@@ -37,7 +37,10 @@ const Group = sequelize.define('Group', {
     field: 'is_active'
   }
 }, {
-  tableName: 'groups'
+  tableName: 'groups',
+  timestamps: true,
+  createdAt: 'created_at',
+  updatedAt: 'updated_at'
 });
 
 const GroupMember = sequelize.define('GroupMember', {
