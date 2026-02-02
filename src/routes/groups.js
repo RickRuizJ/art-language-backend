@@ -2,8 +2,7 @@ const express = require('express');
 const router = express.Router();
 const auth = require('../middleware/auth');
 const roleCheck = require('../middleware/roleCheck');
-const { Group, GroupMember } = require('../models/Group');
-const User = require('../models/User');
+const { Group, GroupMember, User } = require('../models');
 
 // All routes require authentication
 router.use(auth);

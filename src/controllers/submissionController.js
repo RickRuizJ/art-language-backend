@@ -1,6 +1,4 @@
-const Submission = require('../models/Submission');
-const Worksheet = require('../models/Worksheet');
-const User = require('../models/User');
+const { Submission, Worksheet, User } = require('../models');
 
 // Auto-grade function
 const autoGrade = (worksheet, answers) => {

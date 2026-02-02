@@ -193,23 +193,8 @@ Workbook.belongsTo(User, {
   as: 'author'
 });
 
-// ─── CRITICAL: Define Workbook↔Worksheet M:N association ─────────────────────
-// Lazy-require to avoid circular dependency (Worksheet already loaded via controllers)
-const Worksheet = require('./Worksheet');
-
-Workbook.belongsToMany(Worksheet, {
-  through: WorkbookWorksheet,
-  foreignKey: 'workbookId',
-  otherKey: 'worksheetId',
-  as: 'worksheets'
-});
-
-Worksheet.belongsToMany(Workbook, {
-  through: WorkbookWorksheet,
-  foreignKey: 'worksheetId',
-  otherKey: 'workbookId',
-  as: 'workbooks'
-});
+// Note: Workbook↔Worksheet association is defined in models/index.js
+// to avoid circular dependency issues
 
 FileUpload.belongsTo(User, {
   foreignKey: 'uploadedBy',

@@ -1,7 +1,6 @@
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
-const Worksheet = require('../models/Worksheet');
-const { FileUpload, WorkbookWorksheet, Workbook } = require('../models/Workbook');
+const { Worksheet, Workbook, WorkbookWorksheet, FileUpload } = require('../models');
 
 // ─── Multer — memory storage (no disk writes; Railway has no persistent FS) ─
 const ALLOWED_MIMES = {

@@ -1,6 +1,5 @@
 const { body, validationResult } = require('express-validator');
-const Worksheet = require('../models/Worksheet');
-const User = require('../models/User');
+const { Worksheet, User } = require('../models');
 const { Op } = require('sequelize');
 
 // @route   GET /api/worksheets

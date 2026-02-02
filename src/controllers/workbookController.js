@@ -1,6 +1,4 @@
-const { Workbook, WorkbookWorksheet } = require('../models/Workbook');
-const Worksheet = require('../models/Worksheet');
-const User = require('../models/User');
+const { Workbook, WorkbookWorksheet, Worksheet, User } = require('../models');
 const sequelize = require('../config/database');
 
 /**
