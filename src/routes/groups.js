@@ -44,6 +44,83 @@ router.get('/', async (req, res) => {
   }
 });
 
+// NUEVO: Obtener todos los estudiantes (para agregar a grupos)
+router.get('/available-students', roleCheck('teacher', 'admin'), async (req, res) => {
+  try {
+    const students = await User.findAll({
+      where: { role: 'student' },
+      attributes: ['id', 'firstName', 'lastName', 'email'],
+      order: [['firstName', 'ASC'], ['lastName', 'ASC']]
+    });
+
+    res.json({ success: true, data: { students } });
+  } catch (error) {
+    console.error('Get students error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// NUEVO: Unirse a grupo con código (para estudiantes)
+router.post('/join', async (req, res) => {
+  try {
+    const { joinCode } = req.body;
+    const studentId = req.user.id;
+
+    // Verificar que el usuario es estudiante
+    if (req.user.role !== 'student') {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only students can join groups with a code' 
+      });
+    }
+
+    // Buscar grupo por código
+    const group = await Group.findOne({
+      where: { joinCode: joinCode.toUpperCase() }
+    });
+
+    if (!group) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Invalid join code' 
+      });
+    }
+
+    // Verificar si ya está en el grupo
+    const existing = await GroupMember.findOne({
+      where: { groupId: group.id, studentId }
+    });
+
+    if (existing) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'You are already in this group' 
+      });
+    }
+
+    // Agregar al grupo
+    await GroupMember.create({
+      groupId: group.id,
+      studentId
+    });
+
+    res.json({
+      success: true,
+      message: `Successfully joined ${group.name}`,
+      data: { 
+        group: { 
+          id: group.id, 
+          name: group.name,
+          subject: group.subject
+        } 
+      }
+    });
+  } catch (error) {
+    console.error('Join group error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
 // Create group (Teacher, Admin only)
 router.post('/', roleCheck('teacher', 'admin'), async (req, res) => {
   try {

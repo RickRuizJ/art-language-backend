@@ -2,6 +2,11 @@ const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 const User = require('./User');
 
+// Helper function to generate unique join code
+function generateJoinCode() {
+  return Math.random().toString(36).substring(2, 8).toUpperCase();
+}
+
 const Group = sequelize.define('Group', {
   id: {
     type: DataTypes.UUID,
@@ -35,6 +40,14 @@ const Group = sequelize.define('Group', {
     type: DataTypes.BOOLEAN,
     defaultValue: true,
     field: 'is_active'
+  },
+  // NUEVO: Código de invitación para estudiantes
+  joinCode: {
+    type: DataTypes.STRING(8),
+    allowNull: false,
+    unique: true,
+    defaultValue: generateJoinCode,
+    field: 'join_code'
   }
 }, {
   tableName: 'groups'
