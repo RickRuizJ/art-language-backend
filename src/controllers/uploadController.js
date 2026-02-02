@@ -164,7 +164,11 @@ exports.uploadWorksheet = [
         },
       });
     } catch (error) {
-      console.error('[UPLOAD ERROR]', error);
+      console.error('[UPLOAD ERROR] Full error:', error);
+      console.error('[UPLOAD ERROR] Name:', error.name);
+      console.error('[UPLOAD ERROR] Message:', error.message);
+      if (error.stack) console.error('[UPLOAD ERROR] Stack:', error.stack);
+      if (error.parent) console.error('[UPLOAD ERROR] DB error:', error.parent);
       
       if (error.message && error.message.includes('File type not supported')) {
         return res.status(400).json({ success: false, message: error.message });

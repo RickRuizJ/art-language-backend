@@ -193,8 +193,23 @@ Workbook.belongsTo(User, {
   as: 'author'
 });
 
-// Note: Worksheet association is defined after Worksheet model loads
-// This is handled automatically by Sequelize when both models are loaded
+// ─── CRITICAL: Define Workbook↔Worksheet M:N association ─────────────────────
+// Lazy-require to avoid circular dependency (Worksheet already loaded via controllers)
+const Worksheet = require('./Worksheet');
+
+Workbook.belongsToMany(Worksheet, {
+  through: WorkbookWorksheet,
+  foreignKey: 'workbookId',
+  otherKey: 'worksheetId',
+  as: 'worksheets'
+});
+
+Worksheet.belongsToMany(Workbook, {
+  through: WorkbookWorksheet,
+  foreignKey: 'worksheetId',
+  otherKey: 'workbookId',
+  as: 'workbooks'
+});
 
 FileUpload.belongsTo(User, {
   foreignKey: 'uploadedBy',

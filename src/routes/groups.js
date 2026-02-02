@@ -64,6 +64,44 @@ router.post('/', roleCheck('teacher', 'admin'), async (req, res) => {
   }
 });
 
+// Get single group by ID
+router.get('/:id', async (req, res) => {
+  try {
+    const group = await Group.findByPk(req.params.id, {
+      include: [
+        {
+          model: User,
+          as: 'teacher',
+          attributes: ['id', 'firstName', 'lastName', 'email']
+        },
+        {
+          model: GroupMember,
+          as: 'members',
+          include: [{
+            model: User,
+            as: 'student',
+            attributes: ['id', 'firstName', 'lastName', 'email']
+          }]
+        }
+      ]
+    });
+
+    if (!group) {
+      return res.status(404).json({ success: false, message: 'Group not found' });
+    }
+
+    // Permission check: teachers only see their own groups
+    if (req.user.role === 'teacher' && group.teacherId !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    res.json({ success: true, data: { group } });
+  } catch (error) {
+    console.error('Get group error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
 // Add students to group
 router.post('/:id/students', roleCheck('teacher', 'admin'), async (req, res) => {
   try {
