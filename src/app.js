@@ -37,7 +37,19 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-// Body parser middleware
+// CRITICAL FIX: Skip body parsing for multipart/form-data routes
+// express.json() and express.urlencoded() interfere with multer's file parsing
+app.use((req, res, next) => {
+  // Check if this is a multipart/form-data request (file upload)
+  const contentType = req.get('content-type') || '';
+  if (contentType.includes('multipart/form-data')) {
+    // Skip all body parsing, let multer handle it
+    return next();
+  }
+  next();
+});
+
+// Body parser middleware (will be skipped for multipart requests)
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
