@@ -3,39 +3,94 @@ const router = express.Router();
 const auth = require('../middleware/auth');
 const roleCheck = require('../middleware/roleCheck');
 const { Group, GroupMember, User } = require('../models');
+const { Op } = require('sequelize');
 
 // All routes require authentication
 router.use(auth);
 
 // Get all groups
+// FIXED: Students see only their groups, teachers see their created groups
 router.get('/', async (req, res) => {
   try {
-    const where = {};
-    
-    if (req.user.role === 'teacher') {
-      where.teacherId = req.user.id;
-    }
+    let groups;
 
-    const groups = await Group.findAll({
-      where,
-      include: [
-        {
-          model: User,
-          as: 'teacher',
-          attributes: ['id', 'firstName', 'lastName', 'email']
-        },
-        {
-          model: GroupMember,
-          as: 'members',
-          include: [{
+    if (req.user.role === 'student') {
+      // Students: get groups they're members of
+      const memberships = await GroupMember.findAll({
+        where: { studentId: req.user.id },
+        attributes: ['groupId']
+      });
+
+      const groupIds = memberships.map(m => m.groupId);
+
+      if (groupIds.length === 0) {
+        return res.json({ success: true, data: { groups: [] } });
+      }
+
+      groups = await Group.findAll({
+        where: { id: { [Op.in]: groupIds } },
+        include: [
+          {
             model: User,
-            as: 'student',
+            as: 'teacher',
             attributes: ['id', 'firstName', 'lastName', 'email']
-          }]
-        }
-      ],
-      order: [['created_at', 'DESC']]
-    });
+          },
+          {
+            model: GroupMember,
+            as: 'members',
+            include: [{
+              model: User,
+              as: 'student',
+              attributes: ['id', 'firstName', 'lastName', 'email']
+            }]
+          }
+        ],
+        order: [['created_at', 'DESC']]
+      });
+    } else if (req.user.role === 'teacher') {
+      // Teachers: get groups they created
+      groups = await Group.findAll({
+        where: { teacherId: req.user.id },
+        include: [
+          {
+            model: User,
+            as: 'teacher',
+            attributes: ['id', 'firstName', 'lastName', 'email']
+          },
+          {
+            model: GroupMember,
+            as: 'members',
+            include: [{
+              model: User,
+              as: 'student',
+              attributes: ['id', 'firstName', 'lastName', 'email']
+            }]
+          }
+        ],
+        order: [['created_at', 'DESC']]
+      });
+    } else {
+      // Admin: see all groups
+      groups = await Group.findAll({
+        include: [
+          {
+            model: User,
+            as: 'teacher',
+            attributes: ['id', 'firstName', 'lastName', 'email']
+          },
+          {
+            model: GroupMember,
+            as: 'members',
+            include: [{
+              model: User,
+              as: 'student',
+              attributes: ['id', 'firstName', 'lastName', 'email']
+            }]
+          }
+        ],
+        order: [['created_at', 'DESC']]
+      });
+    }
 
     res.json({ success: true, data: { groups } });
   } catch (error) {
@@ -44,7 +99,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// NUEVO: Obtener todos los estudiantes (para agregar a grupos)
+// Get available students (for teachers adding to groups)
 router.get('/available-students', roleCheck('teacher', 'admin'), async (req, res) => {
   try {
     const students = await User.findAll({
@@ -60,60 +115,58 @@ router.get('/available-students', roleCheck('teacher', 'admin'), async (req, res
   }
 });
 
-// NUEVO: Unirse a grupo con código (para estudiantes)
+// Join group with code (students)
 router.post('/join', async (req, res) => {
   try {
     const { joinCode } = req.body;
-    const studentId = req.user.id;
 
-    // Verificar que el usuario es estudiante
-    if (req.user.role !== 'student') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Only students can join groups with a code' 
-      });
+    if (!joinCode) {
+      return res.status(400).json({ success: false, message: 'Join code is required' });
     }
 
-    // Buscar grupo por código
+    // Find group by join code
     const group = await Group.findOne({
       where: { joinCode: joinCode.toUpperCase() }
     });
 
     if (!group) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Invalid join code' 
-      });
+      return res.status(404).json({ success: false, message: 'Invalid join code' });
     }
 
-    // Verificar si ya está en el grupo
+    // Check if already a member
     const existing = await GroupMember.findOne({
-      where: { groupId: group.id, studentId }
+      where: {
+        groupId: group.id,
+        studentId: req.user.id
+      }
     });
 
     if (existing) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'You are already in this group' 
-      });
+      return res.status(400).json({ success: false, message: 'You are already a member of this group' });
     }
 
-    // Agregar al grupo
+    // Add student to group
     await GroupMember.create({
       groupId: group.id,
-      studentId
+      studentId: req.user.id,
+      role: 'member'
+    });
+
+    // Return group info
+    const updatedGroup = await Group.findByPk(group.id, {
+      include: [
+        {
+          model: User,
+          as: 'teacher',
+          attributes: ['id', 'firstName', 'lastName', 'email']
+        }
+      ]
     });
 
     res.json({
       success: true,
-      message: `Successfully joined ${group.name}`,
-      data: { 
-        group: { 
-          id: group.id, 
-          name: group.name,
-          subject: group.subject
-        } 
-      }
+      message: `Successfully joined "${updatedGroup.name}"`,
+      data: { group: updatedGroup }
     });
   } catch (error) {
     console.error('Join group error:', error);
@@ -121,12 +174,19 @@ router.post('/join', async (req, res) => {
   }
 });
 
-// Create group (Teacher, Admin only)
+// Create group (teachers only)
 router.post('/', roleCheck('teacher', 'admin'), async (req, res) => {
   try {
+    const { name, description } = req.body;
+
+    // Generate unique join code
+    const joinCode = await generateUniqueJoinCode();
+
     const group = await Group.create({
-      ...req.body,
-      teacherId: req.user.id
+      name,
+      description,
+      teacherId: req.user.id,
+      joinCode
     });
 
     res.status(201).json({
@@ -140,7 +200,7 @@ router.post('/', roleCheck('teacher', 'admin'), async (req, res) => {
   }
 });
 
-// Get single group by ID
+// Get single group
 router.get('/:id', async (req, res) => {
   try {
     const group = await Group.findByPk(req.params.id, {
@@ -166,9 +226,16 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Group not found' });
     }
 
-    // Permission check: teachers only see their own groups
+    // Permission check
     if (req.user.role === 'teacher' && group.teacherId !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    if (req.user.role === 'student') {
+      const isMember = group.members.some(m => m.studentId === req.user.id);
+      if (!isMember) {
+        return res.status(403).json({ success: false, message: 'Access denied' });
+      }
     }
 
     res.json({ success: true, data: { group } });
@@ -178,51 +245,51 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Add students to group
+// Add students to group (teachers only)
 router.post('/:id/students', roleCheck('teacher', 'admin'), async (req, res) => {
   try {
     const { studentIds } = req.body;
-    const group = await Group.findByPk(req.params.id);
 
+    const group = await Group.findByPk(req.params.id);
     if (!group) {
       return res.status(404).json({ success: false, message: 'Group not found' });
     }
 
-    if (group.teacherId !== req.user.id && req.user.role !== 'admin') {
+    // Check ownership
+    if (req.user.role === 'teacher' && group.teacherId !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
-    const members = await Promise.all(
-      studentIds.map(studentId => 
-        GroupMember.create({
-          groupId: group.id,
-          studentId
-        }).catch(err => null) // Ignore duplicates
-      )
-    );
+    // Add students (ignore if already members)
+    const memberships = studentIds.map(studentId => ({
+      groupId: group.id,
+      studentId,
+      role: 'member'
+    }));
 
-    res.json({
-      success: true,
-      message: 'Students added to group',
-      data: { members: members.filter(m => m !== null) }
+    await GroupMember.bulkCreate(memberships, {
+      ignoreDuplicates: true
     });
+
+    res.json({ success: true, message: 'Students added successfully' });
   } catch (error) {
     console.error('Add students error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
-// Remove student from group
+// Remove student from group (teachers only)
 router.delete('/:groupId/students/:studentId', roleCheck('teacher', 'admin'), async (req, res) => {
   try {
     const { groupId, studentId } = req.params;
-    const group = await Group.findByPk(groupId);
 
+    const group = await Group.findByPk(groupId);
     if (!group) {
       return res.status(404).json({ success: false, message: 'Group not found' });
     }
 
-    if (group.teacherId !== req.user.id && req.user.role !== 'admin') {
+    // Check ownership
+    if (req.user.role === 'teacher' && group.teacherId !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
@@ -230,17 +297,14 @@ router.delete('/:groupId/students/:studentId', roleCheck('teacher', 'admin'), as
       where: { groupId, studentId }
     });
 
-    res.json({
-      success: true,
-      message: 'Student removed from group'
-    });
+    res.json({ success: true, message: 'Student removed successfully' });
   } catch (error) {
     console.error('Remove student error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
-// Delete group
+// Delete group (teachers only)
 router.delete('/:id', roleCheck('teacher', 'admin'), async (req, res) => {
   try {
     const group = await Group.findByPk(req.params.id);
@@ -249,20 +313,37 @@ router.delete('/:id', roleCheck('teacher', 'admin'), async (req, res) => {
       return res.status(404).json({ success: false, message: 'Group not found' });
     }
 
-    if (group.teacherId !== req.user.id && req.user.role !== 'admin') {
+    // Check ownership
+    if (req.user.role === 'teacher' && group.teacherId !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
     await group.destroy();
 
-    res.json({
-      success: true,
-      message: 'Group deleted successfully'
-    });
+    res.json({ success: true, message: 'Group deleted successfully' });
   } catch (error) {
     console.error('Delete group error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
+
+// Helper: Generate unique join code
+async function generateUniqueJoinCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code;
+  let exists = true;
+
+  while (exists) {
+    code = '';
+    for (let i = 0; i < 6; i++) {
+      code += chars[Math.floor(Math.random() * chars.length)];
+    }
+
+    const existing = await Group.findOne({ where: { joinCode: code } });
+    exists = !!existing;
+  }
+
+  return code;
+}
 
 module.exports = router;
