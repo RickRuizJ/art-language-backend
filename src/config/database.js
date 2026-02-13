@@ -1,10 +1,15 @@
 const { Sequelize } = require('sequelize');
 
-// Database configuration with SSL support for production
+// Database configuration with SSL support for Render
 const isProduction = process.env.NODE_ENV === 'production';
 
-const sequelize = new Sequelize(process.env.DATABASE_URL || 'postgresql://localhost:5432/artlanguage', {
+// Parse DATABASE_URL or use default
+const databaseUrl = process.env.DATABASE_URL || 'postgresql://localhost:5432/artlanguage';
+
+const sequelize = new Sequelize(databaseUrl, {
   dialect: 'postgres',
+  
+  // Logging: verbose in development, silent in production
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   
   // SSL configuration for production (Render, Heroku, etc.)
@@ -15,6 +20,7 @@ const sequelize = new Sequelize(process.env.DATABASE_URL || 'postgresql://localh
     }
   } : {},
   
+  // Connection pool settings
   pool: {
     max: 5,
     min: 0,
@@ -22,6 +28,7 @@ const sequelize = new Sequelize(process.env.DATABASE_URL || 'postgresql://localh
     idle: 10000
   },
   
+  // Model defaults
   define: {
     timestamps: true,
     underscored: true,
@@ -31,4 +38,3 @@ const sequelize = new Sequelize(process.env.DATABASE_URL || 'postgresql://localh
 });
 
 module.exports = sequelize;
-
