@@ -148,8 +148,7 @@ router.post('/join', async (req, res) => {
     // Add student to group
     await GroupMember.create({
       groupId: group.id,
-      studentId: req.user.id,
-      role: 'member'
+      studentId: req.user.id
     });
 
     // Return group info
@@ -263,8 +262,7 @@ router.post('/:id/students', roleCheck('teacher', 'admin'), async (req, res) => 
     // Add students (ignore if already members)
     const memberships = studentIds.map(studentId => ({
       groupId: group.id,
-      studentId,
-      role: 'member'
+      studentId
     }));
 
     await GroupMember.bulkCreate(memberships, {
