@@ -1,42 +1,47 @@
-/**
- * Central model registry and associations
- * 
- * CRITICAL: All models must be loaded BEFORE defining associations
- * to avoid circular dependency issues.
- */
+// =====================================================
+// AGREGAR A: backend/src/models/index.js
+// =====================================================
 
-// ─── Step 1: Load all models ──────────────────────────────────────────────────
-const User = require('./User');
+const Assignment = require('./Assignment');
 const Worksheet = require('./Worksheet');
-const { Group, GroupMember } = require('./Group');
-const { Workbook, WorkbookWorksheet, FileUpload } = require('./Workbook');
-const Submission = require('./Submission');
+const Group = require('./Group');
+const User = require('./User');
 
-// ─── Step 2: Define M:N associations ──────────────────────────────────────────
-// These MUST be defined after all models are loaded to ensure both sides exist
+// ─── Assignment Associations ──────────────────────────────────
 
-Workbook.belongsToMany(Worksheet, {
-  through: WorkbookWorksheet,
-  foreignKey: 'workbookId',
-  otherKey: 'worksheetId',
-  as: 'worksheets'
-});
-
-Worksheet.belongsToMany(Workbook, {
-  through: WorkbookWorksheet,
+// Assignment belongs to Worksheet
+Assignment.belongsTo(Worksheet, {
   foreignKey: 'worksheetId',
-  otherKey: 'workbookId',
-  as: 'workbooks'
+  as: 'worksheet'
 });
 
-// ─── Export all models ────────────────────────────────────────────────────────
+// Assignment belongs to Group
+Assignment.belongsTo(Group, {
+  foreignKey: 'groupId',
+  as: 'group'
+});
+
+// Assignment belongs to User (assignedBy)
+Assignment.belongsTo(User, {
+  foreignKey: 'assignedBy',
+  as: 'assigner'
+});
+
+// Worksheet has many Assignments
+Worksheet.hasMany(Assignment, {
+  foreignKey: 'worksheetId',
+  as: 'assignments'
+});
+
+// Group has many Assignments
+Group.hasMany(Assignment, {
+  foreignKey: 'groupId',
+  as: 'assignments'
+});
+
+// ──────────────────────────────────────────────────────────────
+
 module.exports = {
-  User,
-  Worksheet,
-  Group,
-  GroupMember,
-  Workbook,
-  WorkbookWorksheet,
-  FileUpload,
-  Submission
+  // ... existing exports
+  Assignment
 };
