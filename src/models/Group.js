@@ -95,4 +95,4 @@ Group.hasMany(GroupMember, { foreignKey: 'groupId', as: 'members', onDelete: 'CA
 GroupMember.belongsTo(Group, { foreignKey: 'groupId', as: 'group' });
 GroupMember.belongsTo(User, { foreignKey: 'studentId', as: 'student' });
 
-module.exports = { Group, GroupMember };
+module.exports = Group;

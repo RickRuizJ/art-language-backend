@@ -344,13 +344,17 @@ async function generateUniqueJoinCode() {
   return code;
 }
 
+
+// ─── Assignment Routes ────────────────────────────────────────────────────────
+const assignmentController = require('../controllers/assignmentController');
+
 // Assign worksheet to group
 router.post('/:groupId/assignments', 
   roleCheck('teacher', 'admin'),
   assignmentController.assignWorksheet
 );
 
-// Get group assignments  
+// Get group assignments
 router.get('/:groupId/assignments',
   assignmentController.getGroupAssignments
 );
@@ -359,5 +363,8 @@ router.get('/:groupId/assignments',
 router.delete('/:groupId/assignments/:assignmentId',
   roleCheck('teacher', 'admin'),
   assignmentController.removeAssignment
+);
+
+// ──────────────────────────────────────────────────────────────────────────────
 
 module.exports = router;
