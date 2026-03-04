@@ -41,7 +41,6 @@ const Group = sequelize.define('Group', {
     defaultValue: true,
     field: 'is_active'
   },
-  // NUEVO: Código de invitación para estudiantes
   joinCode: {
     type: DataTypes.STRING(8),
     allowNull: false,
@@ -87,12 +86,12 @@ const GroupMember = sequelize.define('GroupMember', {
   timestamps: false
 });
 
-// ─── FIXED: Complete bidirectional associations ──────────────────────────────
+// ─── Associations ─────────────────────────────────────────────────────────────
 Group.belongsTo(User, { foreignKey: 'teacherId', as: 'teacher' });
 Group.hasMany(GroupMember, { foreignKey: 'groupId', as: 'members', onDelete: 'CASCADE' });
 
-// CRITICAL FIX: Add missing inverse association
 GroupMember.belongsTo(Group, { foreignKey: 'groupId', as: 'group' });
 GroupMember.belongsTo(User, { foreignKey: 'studentId', as: 'student' });
 
-module.exports = Group;
+// ─── CRITICAL FIX: Export both models ─────────────────────────────────────────
+module.exports = { Group, GroupMember };
