@@ -22,26 +22,49 @@ app.use(helmet({
 }));
 
 // CORS configuration
+// BUG FIX: The original used a single string origin. When the browser sends a
+// preflight OPTIONS request from Vercel, it is blocked if FRONTEND_URL is
+// missing from Render's environment variables, has a trailing slash, or differs
+// in any way from the exact value. The browser error looks identical to "no
+// token provided" because the request never actually reaches the auth middleware.
+//
+// Fix: use a function-based origin validator so:
+//   1. The explicit FRONTEND_URL env var is always accepted (set this in Render).
+//   2. Any *.vercel.app subdomain is accepted (covers preview deployments).
+//   3. localhost variants work for local development.
+//   4. Requests with no Origin header (curl, Postman, health checks) pass through.
+//
+// Required Render env var: FRONTEND_URL=https://art-language-frontend.vercel.app
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  'http://localhost:3000',
+  'http://localhost:3001',
+].filter(Boolean);
+
 const corsOptions = {
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (origin.endsWith('.vercel.app')) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error(`CORS: origin ${origin} not allowed`));
+  },
   credentials: true,
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
 };
 app.use(cors(corsOptions));
 
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  max: 100,
   message: 'Too many requests from this IP, please try again later.'
 });
 app.use('/api/', limiter);
 
-// ─── Body-parser ──────────────────────────────────────────────────────────────
+// Body-parser
 // express.json() only parses requests whose Content-Type is application/json.
 // Multipart uploads arrive as multipart/form-data, so json() skips them
-// automatically — no manual check required.  Multer handles multipart bodies
-// on the specific routes that need it.
+// automatically. Multer handles multipart bodies on the specific routes that need it.
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -57,10 +80,10 @@ if (process.env.NODE_ENV !== 'production') {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'OK', 
+  res.status(200).json({
+    status: 'OK',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV 
+    environment: process.env.NODE_ENV
   });
 });
 
@@ -73,12 +96,11 @@ app.use('/api/submissions', submissionRoutes);
 app.use('/api/materials', materialRoutes);
 app.use('/api/workbooks', require('./routes/workbooks'));
 
-
 // 404 handler
 app.use((req, res) => {
-  res.status(404).json({ 
-    success: false, 
-    message: 'Route not found' 
+  res.status(404).json({
+    success: false,
+    message: 'Route not found'
   });
 });
 
