@@ -1,58 +1,51 @@
-const { DataTypes } = require('sequelize');
-const sequelize = require('../config/database');
+const mongoose = require('mongoose');
 
-const Assignment = sequelize.define('Assignment', {
-  id: {
-    type: DataTypes.UUID,
-    defaultValue: DataTypes.UUIDV4,
-    primaryKey: true
+const submissionSchema = new mongoose.Schema({
+  studentId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
   },
-  worksheetId: {
-    type: DataTypes.UUID,
-    allowNull: false,
-    field: 'worksheet_id',
-    references: {
-      model: 'worksheets',
-      key: 'id'
-    },
-    onDelete: 'CASCADE'
+  status: {
+    type: String,
+    enum: ['not_started', 'in_progress', 'submitted', 'graded'],
+    default: 'submitted',
   },
-  groupId: {
-    type: DataTypes.UUID,
-    allowNull: false,
-    field: 'group_id',
-    references: {
-      model: 'groups',
-      key: 'id'
-    },
-    onDelete: 'CASCADE'
-  },
-  assignedBy: {
-    type: DataTypes.UUID,
-    allowNull: false,
-    field: 'assigned_by',
-    references: {
-      model: 'users',
-      key: 'id'
-    }
-  },
-  dueDate: {
-    type: DataTypes.DATE,
-    allowNull: true,
-    field: 'due_date'
-  },
-  instructions: {
-    type: DataTypes.TEXT,
-    allowNull: true
-  },
-  isActive: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: true,
-    field: 'is_active'
-  }
-}, {
-  tableName: 'assignments',
-  underscored: true
+  answers: { type: mongoose.Schema.Types.Mixed, default: [] },
+  score: { type: Number, default: null },       // 0–100 percentage, null = not auto-gradeable
+  feedback: { type: String },
+  submittedAt: { type: Date },
+  gradedAt: { type: Date },
+  gradedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 });
 
-module.exports = Assignment;
+const assignmentSchema = new mongoose.Schema(
+  {
+    worksheetId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Worksheet',
+      required: true,
+    },
+    groupId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Group',
+      required: true,
+    },
+    assignedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
+    dueDate: { type: Date, default: null },
+    instructions: { type: String, trim: true },
+    submissions: [submissionSchema],
+  },
+  { timestamps: true }
+);
+
+// Indexes for fast lookups
+assignmentSchema.index({ groupId: 1 });
+assignmentSchema.index({ assignedBy: 1 });
+assignmentSchema.index({ 'submissions.studentId': 1 });
+
+module.exports = mongoose.model('Assignment', assignmentSchema);

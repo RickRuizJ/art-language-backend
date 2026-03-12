@@ -1,251 +1,263 @@
-const { body, validationResult } = require('express-validator');
-const { Worksheet, User } = require('../models');
-const { Op } = require('sequelize');
+const Worksheet = require('../models/Worksheet');
 
-// @route   GET /api/worksheets
-// @desc    Get all worksheets (with filters)
-// @access  Private
-exports.getWorksheets = async (req, res) => {
+/**
+ * GET /worksheets
+ * Supports ?search=&level=&topic=&skill=&subject=&gradeLevel=&page=&limit=
+ * Teachers see their own worksheets; students see all published ones.
+ */
+const getWorksheets = async (req, res) => {
   try {
-    const { subject, gradeLevel, difficulty, search } = req.query;
-    const where = {};
+    const {
+      search, level, topic, skill,
+      subject, gradeLevel, difficulty,
+      page = 1, limit = 20,
+    } = req.query;
 
-    // Only teachers see their own drafts, students see published only
-    if (req.user.role === 'student') {
-      where.isPublished = true;
-    } else if (req.user.role === 'teacher') {
-      where.createdBy = req.user.id;
+    const query = {};
+
+    // Role-based visibility
+    if (req.user.role === 'teacher') {
+      query.createdBy = req.user.id;
+    } else {
+      query.isPublished = true;
     }
 
-    if (subject) where.subject = subject;
-    if (gradeLevel) where.gradeLevel = gradeLevel;
-    if (difficulty) where.difficulty = difficulty;
+    // Keyword search across title, description, topic
     if (search) {
-      where[Op.or] = [
-        { title: { [Op.iLike]: `%${search}%` } },
-        { description: { [Op.iLike]: `%${search}%` } }
+      query.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } },
+        { topic: { $regex: search, $options: 'i' } },
+        { subject: { $regex: search, $options: 'i' } },
       ];
     }
 
-    const worksheets = await Worksheet.findAll({
-      where,
-      include: [{
-        model: User,
-        as: 'creator',
-        attributes: ['id', 'firstName', 'lastName', 'email']
-      }],
-      order: [['created_at', 'DESC']]
-    });
+    // Exact / regex filters
+    if (level) query.level = level.toUpperCase();
+    if (topic) query.topic = { $regex: topic, $options: 'i' };
+    if (skill) query.skill = { $regex: skill, $options: 'i' };
+    if (subject) query.subject = { $regex: subject, $options: 'i' };
+    if (gradeLevel) query.gradeLevel = { $regex: gradeLevel, $options: 'i' };
+    if (difficulty) query.difficulty = difficulty;
 
-    res.json({
-      success: true,
-      data: { worksheets }
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const [worksheets, total] = await Promise.all([
+      Worksheet.find(query)
+        .populate('createdBy', 'firstName lastName')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit))
+        .lean(),
+      Worksheet.countDocuments(query),
+    ]);
+
+    const formatted = worksheets.map(w => ({ ...w, id: w._id }));
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        worksheets: formatted,
+        total,
+        page: parseInt(page),
+        pages: Math.ceil(total / parseInt(limit)),
+      },
     });
-  } catch (error) {
-    console.error('Get worksheets error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    });
+  } catch (err) {
+    console.error('getWorksheets error:', err);
+    res.status(500).json({ status: 'error', message: 'Server error retrieving worksheets.' });
   }
 };
 
-// @route   GET /api/worksheets/:id
-// @desc    Get single worksheet
-// @access  Private
-exports.getWorksheet = async (req, res) => {
+/**
+ * GET /worksheets/:id
+ */
+const getWorksheet = async (req, res) => {
   try {
-    const worksheet = await Worksheet.findByPk(req.params.id, {
-      include: [{
-        model: User,
-        as: 'creator',
-        attributes: ['id', 'firstName', 'lastName', 'email']
-      }]
-    });
+    const worksheet = await Worksheet.findById(req.params.id)
+      .populate('createdBy', 'firstName lastName email')
+      .lean();
 
     if (!worksheet) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Worksheet not found' 
-      });
+      return res.status(404).json({ status: 'error', message: 'Worksheet not found.' });
     }
 
-    // Check permissions
+    // Students can only see published worksheets
     if (req.user.role === 'student' && !worksheet.isPublished) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Access denied' 
-      });
+      return res.status(404).json({ status: 'error', message: 'Worksheet not found.' });
+    }
+    // Teachers can only edit their own
+    if (req.user.role === 'teacher' && worksheet.createdBy?._id?.toString() !== req.user.id) {
+      return res.status(403).json({ status: 'error', message: 'Access denied.' });
     }
 
-    if (req.user.role === 'teacher' && worksheet.createdBy !== req.user.id) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Access denied' 
-      });
-    }
-
-    res.json({
-      success: true,
-      data: { worksheet }
-    });
-  } catch (error) {
-    console.error('Get worksheet error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    });
+    res.status(200).json({ status: 'success', data: { worksheet: { ...worksheet, id: worksheet._id } } });
+  } catch (err) {
+    console.error('getWorksheet error:', err);
+    res.status(500).json({ status: 'error', message: 'Server error.' });
   }
 };
 
-// @route   POST /api/worksheets
-// @desc    Create worksheet
-// @access  Private (Teacher, Admin)
-exports.createWorksheet = [
-  body('title').notEmpty().trim(),
-  body('questions').isArray({ min: 1 }),
+/**
+ * POST /worksheets
+ * Creates a new worksheet (teacher only).
+ */
+const createWorksheet = async (req, res) => {
+  try {
+    if (req.user.role !== 'teacher') {
+      return res.status(403).json({ status: 'error', message: 'Only teachers can create worksheets.' });
+    }
 
-  async (req, res) => {
-    try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return res.status(400).json({ 
-          success: false, 
-          errors: errors.array() 
-        });
+    const {
+      title, description, subject, gradeLevel,
+      difficulty, estimatedTime, autoGrade, passScore,
+      level, topic, skill, questions,
+      isPublished,
+    } = req.body;
+
+    if (!title || !title.trim()) {
+      return res.status(400).json({ status: 'error', message: 'Title is required.' });
+    }
+    if (!questions || !Array.isArray(questions) || questions.length === 0) {
+      return res.status(400).json({ status: 'error', message: 'At least one question is required.' });
+    }
+
+    const worksheet = new Worksheet({
+      title: title.trim(),
+      description: description?.trim(),
+      subject: subject?.trim(),
+      gradeLevel: gradeLevel?.trim(),
+      difficulty: difficulty || 'beginner',
+      estimatedTime: estimatedTime || 30,
+      autoGrade: autoGrade !== false,
+      passScore: passScore || 70,
+      level: level?.toUpperCase() || '',
+      topic: topic?.trim() || '',
+      skill: skill?.toLowerCase() || '',
+      questions,
+      createdBy: req.user.id,
+      isPublished: isPublished !== false,
+    });
+
+    await worksheet.save();
+
+    const populated = await Worksheet.findById(worksheet._id)
+      .populate('createdBy', 'firstName lastName')
+      .lean();
+
+    res.status(201).json({
+      status: 'success',
+      data: { worksheet: { ...populated, id: populated._id } },
+    });
+  } catch (err) {
+    console.error('createWorksheet error:', err);
+    res.status(500).json({ status: 'error', message: 'Server error creating worksheet.' });
+  }
+};
+
+/**
+ * PUT /worksheets/:id
+ * Updates an existing worksheet (teacher only, must be owner).
+ */
+const updateWorksheet = async (req, res) => {
+  try {
+    if (req.user.role !== 'teacher') {
+      return res.status(403).json({ status: 'error', message: 'Only teachers can update worksheets.' });
+    }
+
+    const worksheet = await Worksheet.findById(req.params.id);
+    if (!worksheet) return res.status(404).json({ status: 'error', message: 'Worksheet not found.' });
+
+    if (worksheet.createdBy?.toString() !== req.user.id) {
+      return res.status(403).json({ status: 'error', message: 'You do not own this worksheet.' });
+    }
+
+    const updatable = [
+      'title', 'description', 'subject', 'gradeLevel', 'difficulty',
+      'estimatedTime', 'autoGrade', 'passScore', 'level', 'topic',
+      'skill', 'questions', 'isPublished',
+    ];
+
+    updatable.forEach(field => {
+      if (req.body[field] !== undefined) {
+        worksheet[field] = req.body[field];
       }
-
-      const worksheet = await Worksheet.create({
-        ...req.body,
-        createdBy: req.user.id
-      });
-
-      res.status(201).json({
-        success: true,
-        message: 'Worksheet created successfully',
-        data: { worksheet }
-      });
-    } catch (error) {
-      console.error('Create worksheet error:', error);
-      res.status(500).json({ 
-        success: false, 
-        message: 'Server error' 
-      });
-    }
-  }
-];
-
-// @route   PUT /api/worksheets/:id
-// @desc    Update worksheet
-// @access  Private (Teacher, Admin)
-exports.updateWorksheet = async (req, res) => {
-  try {
-    const worksheet = await Worksheet.findByPk(req.params.id);
-
-    if (!worksheet) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Worksheet not found' 
-      });
-    }
-
-    // Check ownership
-    if (worksheet.createdBy !== req.user.id && req.user.role !== 'admin') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Access denied' 
-      });
-    }
-
-    await worksheet.update(req.body);
-
-    res.json({
-      success: true,
-      message: 'Worksheet updated successfully',
-      data: { worksheet }
     });
-  } catch (error) {
-    console.error('Update worksheet error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
+
+    await worksheet.save();
+
+    const populated = await Worksheet.findById(worksheet._id)
+      .populate('createdBy', 'firstName lastName')
+      .lean();
+
+    res.status(200).json({
+      status: 'success',
+      data: { worksheet: { ...populated, id: populated._id } },
     });
+  } catch (err) {
+    console.error('updateWorksheet error:', err);
+    res.status(500).json({ status: 'error', message: 'Server error updating worksheet.' });
   }
 };
 
-// @route   DELETE /api/worksheets/:id
-// @desc    Delete worksheet
-// @access  Private (Teacher, Admin)
-exports.deleteWorksheet = async (req, res) => {
+/**
+ * DELETE /worksheets/:id
+ */
+const deleteWorksheet = async (req, res) => {
   try {
-    const worksheet = await Worksheet.findByPk(req.params.id);
-
-    if (!worksheet) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Worksheet not found' 
-      });
+    if (req.user.role !== 'teacher') {
+      return res.status(403).json({ status: 'error', message: 'Only teachers can delete worksheets.' });
     }
 
-    // Check ownership
-    if (worksheet.createdBy !== req.user.id && req.user.role !== 'admin') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Access denied' 
-      });
+    const worksheet = await Worksheet.findById(req.params.id);
+    if (!worksheet) return res.status(404).json({ status: 'error', message: 'Worksheet not found.' });
+
+    if (worksheet.createdBy?.toString() !== req.user.id) {
+      return res.status(403).json({ status: 'error', message: 'You do not own this worksheet.' });
     }
 
-    await worksheet.destroy();
-
-    res.json({
-      success: true,
-      message: 'Worksheet deleted successfully'
-    });
-  } catch (error) {
-    console.error('Delete worksheet error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    });
+    await worksheet.deleteOne();
+    res.status(200).json({ status: 'success', data: null });
+  } catch (err) {
+    console.error('deleteWorksheet error:', err);
+    res.status(500).json({ status: 'error', message: 'Server error.' });
   }
 };
 
-// @route   POST /api/worksheets/:id/publish
-// @desc    Publish/unpublish worksheet
-// @access  Private (Teacher, Admin)
-exports.togglePublish = async (req, res) => {
+/**
+ * POST /worksheets/:id/publish
+ * Toggles publish state (teacher only).
+ */
+const togglePublish = async (req, res) => {
   try {
-    const worksheet = await Worksheet.findByPk(req.params.id);
-
-    if (!worksheet) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Worksheet not found' 
-      });
+    if (req.user.role !== 'teacher') {
+      return res.status(403).json({ status: 'error', message: 'Only teachers can publish worksheets.' });
     }
 
-    // Check ownership
-    if (worksheet.createdBy !== req.user.id && req.user.role !== 'admin') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Access denied' 
-      });
+    const worksheet = await Worksheet.findById(req.params.id);
+    if (!worksheet) return res.status(404).json({ status: 'error', message: 'Worksheet not found.' });
+    if (worksheet.createdBy?.toString() !== req.user.id) {
+      return res.status(403).json({ status: 'error', message: 'Access denied.' });
     }
 
-    await worksheet.update({ 
-      isPublished: !worksheet.isPublished 
-    });
+    worksheet.isPublished = !worksheet.isPublished;
+    await worksheet.save();
 
-    res.json({
-      success: true,
-      message: `Worksheet ${worksheet.isPublished ? 'published' : 'unpublished'} successfully`,
-      data: { worksheet }
+    res.status(200).json({
+      status: 'success',
+      data: { worksheet: { id: worksheet._id, isPublished: worksheet.isPublished } },
     });
-  } catch (error) {
-    console.error('Toggle publish error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    });
+  } catch (err) {
+    console.error('togglePublish error:', err);
+    res.status(500).json({ status: 'error', message: 'Server error.' });
   }
+};
+
+module.exports = {
+  getWorksheets,
+  getWorksheet,
+  createWorksheet,
+  updateWorksheet,
+  deleteWorksheet,
+  togglePublish,
 };
