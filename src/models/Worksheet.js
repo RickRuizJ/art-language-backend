@@ -1,77 +1,68 @@
-const mongoose = require('mongoose');
+'use strict';
+const { DataTypes } = require('sequelize');
+const sequelize = require('../config/database');
 
-const questionSchema = new mongoose.Schema({
-  type: {
-    type: String,
-    enum: ['multiple_choice', 'fill_blank', 'matching', 'true_false', 'short_answer'],
-    required: true,
+const Worksheet = sequelize.define('Worksheet', {
+  id: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true
   },
-  question: { type: String, required: true, trim: true },
-  points: { type: Number, default: 10, min: 1 },
-  explanation: { type: String, trim: true },
-
-  // multiple_choice & true_false
-  options: [{ type: String, trim: true }],
-  correctAnswer: { type: String, trim: true },
-
-  // matching
-  pairs: [
-    {
-      left: { type: String, trim: true },
-      right: { type: String, trim: true },
-    },
-  ],
-
-  // short_answer
-  sampleAnswer: { type: String, trim: true },
+  title: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  description: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  subject: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  gradeLevel: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    field: 'grade_level'
+  },
+  difficulty: {
+    type: DataTypes.ENUM('beginner', 'intermediate', 'advanced'),
+    defaultValue: 'beginner'
+  },
+  estimatedTime: {
+    type: DataTypes.INTEGER,
+    defaultValue: 30,
+    field: 'estimated_time'
+  },
+  // Las preguntas se guardan como JSONB en PostgreSQL
+  questions: {
+    type: DataTypes.JSONB,
+    defaultValue: []
+  },
+  autoGrade: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: true,
+    field: 'auto_grade'
+  },
+  passScore: {
+    type: DataTypes.INTEGER,
+    defaultValue: 70,
+    field: 'pass_score'
+  },
+  createdBy: {
+    type: DataTypes.UUID,
+    allowNull: false,
+    field: 'created_by',
+    references: { model: 'users', key: 'id' }
+  },
+  isPublished: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: true,
+    field: 'is_published'
+  }
+}, {
+  tableName: 'worksheets',
+  underscored: true
 });
 
-const worksheetSchema = new mongoose.Schema(
-  {
-    title: { type: String, required: true, trim: true },
-    description: { type: String, trim: true },
-
-    // Existing fields
-    subject: { type: String, trim: true },
-    gradeLevel: { type: String, trim: true },
-    difficulty: {
-      type: String,
-      enum: ['beginner', 'intermediate', 'advanced'],
-      default: 'beginner',
-    },
-    estimatedTime: { type: Number, default: 30 },
-    autoGrade: { type: Boolean, default: true },
-    passScore: { type: Number, default: 70 },
-
-    // New fields for library search
-    level: {
-      type: String,
-      enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', ''],
-      default: '',
-    },
-    topic: { type: String, trim: true, default: '' },
-    skill: {
-      type: String,
-      enum: ['grammar', 'vocabulary', 'reading', 'writing', 'listening', 'speaking', ''],
-      default: '',
-    },
-
-    questions: [questionSchema],
-    createdBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      required: true,
-    },
-    isPublished: { type: Boolean, default: true },
-  },
-  { timestamps: true }
-);
-
-// Indexes for search performance
-worksheetSchema.index({ title: 'text', description: 'text', topic: 'text', subject: 'text' });
-worksheetSchema.index({ level: 1 });
-worksheetSchema.index({ skill: 1 });
-worksheetSchema.index({ createdBy: 1 });
-worksheetSchema.index({ isPublished: 1 });
-
-module.exports = mongoose.model('Worksheet', worksheetSchema);
+module.exports = Worksheet;

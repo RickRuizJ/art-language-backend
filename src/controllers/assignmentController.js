@@ -1,285 +1,181 @@
-const Assignment = require('../models/Assignment');
-const Worksheet = require('../models/Worksheet');
-const Group = require('../models/Group');
+'use strict';
+const { Assignment, Worksheet, Group, GroupMember, Submission, User } = require('../models');
 
 /**
- * GET /students/:studentId/assignments
- * Returns all assignments visible to a student across all their groups.
+ * POST /api/groups/:groupId/assignments
+ * Profesor asigna un worksheet a un grupo
  */
-const getStudentAssignments = async (req, res) => {
+const assignWorksheet = async (req, res) => {
   try {
-    const { studentId } = req.params;
-
-    // Students can only view their own assignments
-    if (req.user.role === 'student' && req.user.id !== studentId) {
-      return res.status(403).json({ status: 'error', message: 'Access denied.' });
-    }
-
-    // Find all groups the student belongs to
-    const groups = await Group.find({ 'members.studentId': studentId }).lean();
-    const groupIds = groups.map(g => g._id);
-
-    if (groupIds.length === 0) {
-      return res.status(200).json({ status: 'success', data: { assignments: [] } });
-    }
-
-    // Find all assignments for those groups, populate worksheet
-    const assignments = await Assignment.find({ groupId: { $in: groupIds } })
-      .populate('worksheetId', 'title description subject gradeLevel estimatedTime questions')
-      .populate('groupId', 'name')
-      .populate('assignedBy', 'firstName lastName email')
-      .sort({ createdAt: -1 })
-      .lean();
-
-    // Attach this student's submission status to each assignment
-    const enriched = assignments.map(a => {
-      const submission = (a.submissions || []).find(
-        s => s.studentId?.toString() === studentId
-      );
-      return {
-        id: a._id,
-        worksheet: a.worksheetId
-          ? { ...a.worksheetId, id: a.worksheetId._id }
-          : null,
-        group: a.groupId
-          ? { ...a.groupId, id: a.groupId._id }
-          : null,
-        assignedBy: a.assignedBy,
-        dueDate: a.dueDate,
-        instructions: a.instructions,
-        createdAt: a.createdAt,
-        status: submission ? submission.status : 'not_started',
-        score: submission?.score ?? null,
-        submittedAt: submission?.submittedAt ?? null,
-      };
-    });
-
-    res.status(200).json({ status: 'success', data: { assignments: enriched } });
-  } catch (err) {
-    console.error('getStudentAssignments error:', err);
-    res.status(500).json({ status: 'error', message: 'Server error retrieving assignments.' });
-  }
-};
-
-/**
- * GET /groups/:groupId/assignments
- * Returns all assignments for a group (already existing in many backends — this
- * is the authoritative version that populates worksheets correctly).
- */
-const getGroupAssignments = async (req, res) => {
-  try {
-    const { groupId } = req.params;
-
-    const group = await Group.findById(groupId).lean();
-    if (!group) {
-      return res.status(404).json({ status: 'error', message: 'Group not found.' });
-    }
-
-    // Teachers must own the group; students must be members
-    if (req.user.role === 'teacher' && group.teacherId?.toString() !== req.user.id) {
-      return res.status(403).json({ status: 'error', message: 'Access denied.' });
-    }
-    if (req.user.role === 'student') {
-      const isMember = (group.members || []).some(m => m.studentId?.toString() === req.user.id);
-      if (!isMember) {
-        return res.status(403).json({ status: 'error', message: 'Access denied.' });
-      }
-    }
-
-    const assignments = await Assignment.find({ groupId })
-      .populate('worksheetId', 'title description subject gradeLevel estimatedTime questions')
-      .populate('assignedBy', 'firstName lastName')
-      .sort({ createdAt: -1 })
-      .lean();
-
-    const formatted = assignments.map(a => ({
-      id: a._id,
-      worksheet: a.worksheetId ? { ...a.worksheetId, id: a.worksheetId._id } : null,
-      assignedBy: a.assignedBy,
-      dueDate: a.dueDate,
-      instructions: a.instructions,
-      submissions: a.submissions || [],
-      createdAt: a.createdAt,
-    }));
-
-    res.status(200).json({ status: 'success', data: { assignments: formatted } });
-  } catch (err) {
-    console.error('getGroupAssignments error:', err);
-    res.status(500).json({ status: 'error', message: 'Server error.' });
-  }
-};
-
-/**
- * POST /groups/:groupId/assignments
- * Teacher assigns a worksheet to a group.
- * Body: { worksheetId, dueDate?, instructions? }
- */
-const createAssignment = async (req, res) => {
-  try {
-    if (req.user.role !== 'teacher') {
-      return res.status(403).json({ status: 'error', message: 'Only teachers can create assignments.' });
-    }
-
     const { groupId } = req.params;
     const { worksheetId, dueDate, instructions } = req.body;
 
     if (!worksheetId) {
-      return res.status(400).json({ status: 'error', message: 'worksheetId is required.' });
+      return res.status(400).json({ status: 'error', message: 'worksheetId es requerido.' });
     }
 
     const [worksheet, group] = await Promise.all([
-      Worksheet.findById(worksheetId),
-      Group.findById(groupId),
+      Worksheet.findByPk(worksheetId),
+      Group.findByPk(groupId),
     ]);
 
-    if (!worksheet) return res.status(404).json({ status: 'error', message: 'Worksheet not found.' });
-    if (!group) return res.status(404).json({ status: 'error', message: 'Group not found.' });
+    if (!worksheet) return res.status(404).json({ status: 'error', message: 'Worksheet no encontrado.' });
+    if (!group)     return res.status(404).json({ status: 'error', message: 'Grupo no encontrado.' });
 
-    if (group.teacherId?.toString() !== req.user.id) {
-      return res.status(403).json({ status: 'error', message: 'You do not own this group.' });
+    if (req.user.role === 'teacher' && group.teacherId !== req.user.id) {
+      return res.status(403).json({ status: 'error', message: 'No eres el profesor de este grupo.' });
     }
 
-    const assignment = new Assignment({
+    const assignment = await Assignment.create({
       worksheetId,
       groupId,
       assignedBy: req.user.id,
       dueDate: dueDate ? new Date(dueDate) : null,
       instructions: instructions || null,
-      submissions: [],
+      isActive: true,
     });
 
-    await assignment.save();
-
-    const populated = await Assignment.findById(assignment._id)
-      .populate('worksheetId', 'title description')
-      .populate('assignedBy', 'firstName lastName')
-      .lean();
-
-    res.status(201).json({
-      status: 'success',
-      data: {
-        assignment: {
-          ...populated,
-          id: populated._id,
-          worksheet: populated.worksheetId ? { ...populated.worksheetId, id: populated.worksheetId._id } : null,
-        },
-      },
+    const populated = await Assignment.findByPk(assignment.id, {
+      include: [
+        { model: Worksheet, as: 'worksheet', attributes: ['id', 'title', 'description'] },
+        { model: User, as: 'assigner', attributes: ['id', 'firstName', 'lastName'] },
+      ]
     });
+
+    return res.status(201).json({ status: 'success', data: { assignment: populated } });
   } catch (err) {
-    console.error('createAssignment error:', err);
-    res.status(500).json({ status: 'error', message: 'Server error creating assignment.' });
+    console.error('assignWorksheet error:', err);
+    return res.status(500).json({ status: 'error', message: 'Error creando assignment.' });
   }
 };
 
 /**
- * PUT /assignments/:assignmentId/submit
- * Student submits answers for an assignment.
- * Body: { answers: [...] }
+ * GET /api/groups/:groupId/assignments
+ * Obtener assignments de un grupo
  */
-const submitAssignment = async (req, res) => {
+const getGroupAssignments = async (req, res) => {
   try {
-    if (req.user.role !== 'student') {
-      return res.status(403).json({ status: 'error', message: 'Only students can submit assignments.' });
+    const { groupId } = req.params;
+
+    const group = await Group.findByPk(groupId);
+    if (!group) return res.status(404).json({ status: 'error', message: 'Grupo no encontrado.' });
+
+    if (req.user.role === 'teacher' && group.teacherId !== req.user.id) {
+      return res.status(403).json({ status: 'error', message: 'Acceso denegado.' });
     }
 
-    const { answers } = req.body;
-    const assignment = await Assignment.findById(req.params.assignmentId)
-      .populate('worksheetId')
-      .populate('groupId', 'members');
-
-    if (!assignment) return res.status(404).json({ status: 'error', message: 'Assignment not found.' });
-
-    // Verify student is a group member
-    const isMember = (assignment.groupId?.members || []).some(
-      m => m.studentId?.toString() === req.user.id
-    );
-    if (!isMember) return res.status(403).json({ status: 'error', message: 'Access denied.' });
-
-    // Check for existing submission
-    const existingIdx = assignment.submissions.findIndex(
-      s => s.studentId?.toString() === req.user.id
-    );
-    if (existingIdx !== -1 && assignment.submissions[existingIdx].status === 'submitted') {
-      return res.status(400).json({ status: 'error', message: 'Already submitted.' });
+    if (req.user.role === 'student') {
+      const membership = await GroupMember.findOne({
+        where: { groupId, studentId: req.user.id }
+      });
+      if (!membership) return res.status(403).json({ status: 'error', message: 'Acceso denegado.' });
     }
 
-    // Auto-grade objective questions
-    const questions = assignment.worksheetId?.questions || [];
-    let earned = 0;
-    let total = 0;
-
-    questions.forEach((q, i) => {
-      const pts = q.points || 10;
-      total += pts;
-      const studentAnswer = answers?.[i];
-
-      if (q.type === 'multiple_choice' || q.type === 'true_false') {
-        if (studentAnswer !== undefined && studentAnswer === q.correctAnswer) {
-          earned += pts;
-        }
-      } else if (q.type === 'fill_blank') {
-        if (
-          typeof studentAnswer === 'string' &&
-          studentAnswer.trim().toLowerCase() === (q.correctAnswer || '').toLowerCase()
-        ) {
-          earned += pts;
-        }
-      }
-      // 'matching' and 'short_answer' require manual grading — score stays null
+    const assignments = await Assignment.findAll({
+      where: { groupId, isActive: true },
+      include: [
+        { model: Worksheet, as: 'worksheet', attributes: ['id', 'title', 'description', 'questions'] },
+        { model: User, as: 'assigner', attributes: ['id', 'firstName', 'lastName'] },
+      ],
+      order: [['created_at', 'DESC']]
     });
 
-    const score = total > 0 ? Math.round((earned / total) * 100) : null;
-    const submissionData = {
-      studentId: req.user.id,
-      status: 'submitted',
-      answers: answers || [],
-      score,
-      submittedAt: new Date(),
-    };
+    // Si es estudiante, adjuntar su submission a cada assignment
+    let result = assignments;
+    if (req.user.role === 'student') {
+      const submissions = await Submission.findAll({
+        where: { studentId: req.user.id },
+        attributes: ['worksheetId', 'status', 'score', 'maxScore', 'submittedAt']
+      });
+      const subMap = {};
+      submissions.forEach(s => { subMap[s.worksheetId] = s; });
 
-    if (existingIdx !== -1) {
-      assignment.submissions[existingIdx] = { ...assignment.submissions[existingIdx], ...submissionData };
-    } else {
-      assignment.submissions.push(submissionData);
+      result = assignments.map(a => ({
+        ...a.toJSON(),
+        submission: subMap[a.worksheetId] || null,
+        submissionStatus: subMap[a.worksheetId]?.status || 'pending'
+      }));
     }
 
-    await assignment.save();
-    res.status(200).json({ status: 'success', data: { score, message: 'Assignment submitted successfully.' } });
+    return res.status(200).json({ status: 'success', data: { assignments: result } });
   } catch (err) {
-    console.error('submitAssignment error:', err);
-    res.status(500).json({ status: 'error', message: 'Server error submitting assignment.' });
+    console.error('getGroupAssignments error:', err);
+    return res.status(500).json({ status: 'error', message: 'Error obteniendo assignments.' });
   }
 };
 
 /**
- * DELETE /groups/:groupId/assignments/:assignmentId
- * Teacher removes an assignment from a group.
+ * GET /api/students/assignments
+ * Assignments del estudiante autenticado según su groupId
  */
-const deleteAssignment = async (req, res) => {
+const getStudentAssignments = async (req, res) => {
   try {
-    if (req.user.role !== 'teacher') {
-      return res.status(403).json({ status: 'error', message: 'Only teachers can remove assignments.' });
+    const studentId = req.user.id;
+
+    const student = await User.findByPk(studentId, { attributes: ['groupId'] });
+    if (!student?.groupId) {
+      return res.status(200).json({ status: 'success', data: { assignments: [] } });
     }
 
-    const assignment = await Assignment.findById(req.params.assignmentId);
-    if (!assignment) return res.status(404).json({ status: 'error', message: 'Assignment not found.' });
+    const assignments = await Assignment.findAll({
+      where: { groupId: student.groupId, isActive: true },
+      include: [
+        { model: Worksheet, as: 'worksheet', attributes: ['id', 'title', 'description', 'questions'] },
+        { model: Group, as: 'group', attributes: ['id', 'name'] },
+        { model: User, as: 'assigner', attributes: ['id', 'firstName', 'lastName'] },
+      ],
+      order: [['due_date', 'ASC NULLS LAST']]
+    });
 
-    if (assignment.assignedBy?.toString() !== req.user.id) {
-      return res.status(403).json({ status: 'error', message: 'You did not create this assignment.' });
-    }
+    const submissions = await Submission.findAll({
+      where: { studentId },
+      attributes: ['worksheetId', 'status', 'score', 'maxScore', 'submittedAt']
+    });
+    const subMap = {};
+    submissions.forEach(s => { subMap[s.worksheetId] = s; });
 
-    await assignment.deleteOne();
-    res.status(200).json({ status: 'success', data: null });
+    const enriched = assignments.map(a => ({
+      ...a.toJSON(),
+      submission: subMap[a.worksheetId] || null,
+      submissionStatus: subMap[a.worksheetId]?.status || 'pending'
+    }));
+
+    return res.status(200).json({ status: 'success', data: { assignments: enriched } });
   } catch (err) {
-    console.error('deleteAssignment error:', err);
-    res.status(500).json({ status: 'error', message: 'Server error.' });
+    console.error('getStudentAssignments error:', err);
+    return res.status(500).json({ status: 'error', message: 'Error obteniendo assignments.' });
+  }
+};
+
+/**
+ * DELETE /api/groups/:groupId/assignments/:assignmentId
+ * Profesor elimina un assignment
+ */
+const removeAssignment = async (req, res) => {
+  try {
+    const { assignmentId } = req.params;
+
+    const assignment = await Assignment.findByPk(assignmentId);
+    if (!assignment) return res.status(404).json({ status: 'error', message: 'Assignment no encontrado.' });
+
+    if (req.user.role === 'teacher' && assignment.assignedBy !== req.user.id) {
+      return res.status(403).json({ status: 'error', message: 'No creaste este assignment.' });
+    }
+
+    await assignment.update({ isActive: false });
+
+    return res.status(200).json({ status: 'success', message: 'Assignment eliminado.' });
+  } catch (err) {
+    console.error('removeAssignment error:', err);
+    return res.status(500).json({ status: 'error', message: 'Error eliminando assignment.' });
   }
 };
 
 module.exports = {
-  getStudentAssignments,
+  assignWorksheet,       // alias usado en groups.js
+  createAssignment: assignWorksheet,  // alias alternativo
   getGroupAssignments,
-  createAssignment,
-  submitAssignment,
-  deleteAssignment,
+  getStudentAssignments,
+  removeAssignment,
+  deleteAssignment: removeAssignment, // alias alternativo
 };
