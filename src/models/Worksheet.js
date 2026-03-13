@@ -34,7 +34,6 @@ const Worksheet = sequelize.define('Worksheet', {
     defaultValue: 30,
     field: 'estimated_time'
   },
-  // Las preguntas se guardan como JSONB en PostgreSQL
   questions: {
     type: DataTypes.JSONB,
     defaultValue: []
@@ -64,5 +63,8 @@ const Worksheet = sequelize.define('Worksheet', {
   tableName: 'worksheets',
   underscored: true
 });
+
+const User = require('./User');
+Worksheet.belongsTo(User, { foreignKey: 'created_by', as: 'creator' });
 
 module.exports = Worksheet;

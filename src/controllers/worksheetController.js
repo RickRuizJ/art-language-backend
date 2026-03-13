@@ -1,9 +1,9 @@
+const { Op } = require('sequelize');
 const Worksheet = require('../models/Worksheet');
+const User = require('../models/User');
 
 /**
  * GET /worksheets
- * Supports ?search=&level=&topic=&skill=&subject=&gradeLevel=&page=&limit=
- * Teachers see their own worksheets; students see all published ones.
  */
 const getWorksheets = async (req, res) => {
   try {
@@ -13,51 +13,44 @@ const getWorksheets = async (req, res) => {
       page = 1, limit = 20,
     } = req.query;
 
-    const query = {};
+    const where = {};
 
-    // Role-based visibility
     if (req.user.role === 'teacher') {
-      query.createdBy = req.user.id;
+      where.created_by = req.user.id;
     } else {
-      query.isPublished = true;
+      where.is_published = true;
     }
 
-    // Keyword search across title, description, topic
     if (search) {
-      query.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } },
-        { topic: { $regex: search, $options: 'i' } },
-        { subject: { $regex: search, $options: 'i' } },
+      where[Op.or] = [
+        { title: { [Op.iLike]: `%${search}%` } },
+        { description: { [Op.iLike]: `%${search}%` } },
+        { topic: { [Op.iLike]: `%${search}%` } },
+        { subject: { [Op.iLike]: `%${search}%` } },
       ];
     }
 
-    // Exact / regex filters
-    if (level) query.level = level.toUpperCase();
-    if (topic) query.topic = { $regex: topic, $options: 'i' };
-    if (skill) query.skill = { $regex: skill, $options: 'i' };
-    if (subject) query.subject = { $regex: subject, $options: 'i' };
-    if (gradeLevel) query.gradeLevel = { $regex: gradeLevel, $options: 'i' };
-    if (difficulty) query.difficulty = difficulty;
+    if (level) where.level = level.toUpperCase();
+    if (topic) where.topic = { [Op.iLike]: `%${topic}%` };
+    if (skill) where.skill = { [Op.iLike]: `%${skill}%` };
+    if (subject) where.subject = { [Op.iLike]: `%${subject}%` };
+    if (gradeLevel) where.grade_level = { [Op.iLike]: `%${gradeLevel}%` };
+    if (difficulty) where.difficulty = difficulty;
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    const [worksheets, total] = await Promise.all([
-      Worksheet.find(query)
-        .populate('createdBy', 'firstName lastName')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit))
-        .lean(),
-      Worksheet.countDocuments(query),
-    ]);
-
-    const formatted = worksheets.map(w => ({ ...w, id: w._id }));
+    const { rows: worksheets, count: total } = await Worksheet.findAndCountAll({
+      where,
+      include: [{ model: User, as: 'creator', attributes: ['id', 'firstName', 'lastName'] }],
+      order: [['createdAt', 'DESC']],
+      offset,
+      limit: parseInt(limit),
+    });
 
     res.status(200).json({
       status: 'success',
       data: {
-        worksheets: formatted,
+        worksheets,
         total,
         page: parseInt(page),
         pages: Math.ceil(total / parseInt(limit)),
@@ -74,24 +67,23 @@ const getWorksheets = async (req, res) => {
  */
 const getWorksheet = async (req, res) => {
   try {
-    const worksheet = await Worksheet.findById(req.params.id)
-      .populate('createdBy', 'firstName lastName email')
-      .lean();
+    const worksheet = await Worksheet.findByPk(req.params.id, {
+      include: [{ model: User, as: 'creator', attributes: ['id', 'firstName', 'lastName', 'email'] }],
+    });
 
     if (!worksheet) {
       return res.status(404).json({ status: 'error', message: 'Worksheet not found.' });
     }
 
-    // Students can only see published worksheets
-    if (req.user.role === 'student' && !worksheet.isPublished) {
+    if (req.user.role === 'student' && !worksheet.is_published) {
       return res.status(404).json({ status: 'error', message: 'Worksheet not found.' });
     }
-    // Teachers can only edit their own
-    if (req.user.role === 'teacher' && worksheet.createdBy?._id?.toString() !== req.user.id) {
+
+    if (req.user.role === 'teacher' && worksheet.created_by !== req.user.id) {
       return res.status(403).json({ status: 'error', message: 'Access denied.' });
     }
 
-    res.status(200).json({ status: 'success', data: { worksheet: { ...worksheet, id: worksheet._id } } });
+    res.status(200).json({ status: 'success', data: { worksheet } });
   } catch (err) {
     console.error('getWorksheet error:', err);
     res.status(500).json({ status: 'error', message: 'Server error.' });
@@ -100,7 +92,6 @@ const getWorksheet = async (req, res) => {
 
 /**
  * POST /worksheets
- * Creates a new worksheet (teacher only).
  */
 const createWorksheet = async (req, res) => {
   try {
@@ -111,8 +102,7 @@ const createWorksheet = async (req, res) => {
     const {
       title, description, subject, gradeLevel,
       difficulty, estimatedTime, autoGrade, passScore,
-      level, topic, skill, questions,
-      isPublished,
+      level, topic, skill, questions, isPublished,
     } = req.body;
 
     if (!title || !title.trim()) {
@@ -122,33 +112,28 @@ const createWorksheet = async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'At least one question is required.' });
     }
 
-    const worksheet = new Worksheet({
+    const worksheet = await Worksheet.create({
       title: title.trim(),
       description: description?.trim(),
       subject: subject?.trim(),
-      gradeLevel: gradeLevel?.trim(),
+      grade_level: gradeLevel?.trim(),
       difficulty: difficulty || 'beginner',
-      estimatedTime: estimatedTime || 30,
-      autoGrade: autoGrade !== false,
-      passScore: passScore || 70,
+      estimated_time: estimatedTime || 30,
+      auto_grade: autoGrade !== false,
+      pass_score: passScore || 70,
       level: level?.toUpperCase() || '',
       topic: topic?.trim() || '',
       skill: skill?.toLowerCase() || '',
       questions,
-      createdBy: req.user.id,
-      isPublished: isPublished !== false,
+      created_by: req.user.id,
+      is_published: isPublished !== false,
     });
 
-    await worksheet.save();
-
-    const populated = await Worksheet.findById(worksheet._id)
-      .populate('createdBy', 'firstName lastName')
-      .lean();
-
-    res.status(201).json({
-      status: 'success',
-      data: { worksheet: { ...populated, id: populated._id } },
+    const populated = await Worksheet.findByPk(worksheet.id, {
+      include: [{ model: User, as: 'creator', attributes: ['id', 'firstName', 'lastName'] }],
     });
+
+    res.status(201).json({ status: 'success', data: { worksheet: populated } });
   } catch (err) {
     console.error('createWorksheet error:', err);
     res.status(500).json({ status: 'error', message: 'Server error creating worksheet.' });
@@ -157,7 +142,6 @@ const createWorksheet = async (req, res) => {
 
 /**
  * PUT /worksheets/:id
- * Updates an existing worksheet (teacher only, must be owner).
  */
 const updateWorksheet = async (req, res) => {
   try {
@@ -165,35 +149,32 @@ const updateWorksheet = async (req, res) => {
       return res.status(403).json({ status: 'error', message: 'Only teachers can update worksheets.' });
     }
 
-    const worksheet = await Worksheet.findById(req.params.id);
+    const worksheet = await Worksheet.findByPk(req.params.id);
     if (!worksheet) return res.status(404).json({ status: 'error', message: 'Worksheet not found.' });
 
-    if (worksheet.createdBy?.toString() !== req.user.id) {
+    if (worksheet.created_by !== req.user.id) {
       return res.status(403).json({ status: 'error', message: 'You do not own this worksheet.' });
     }
 
-    const updatable = [
-      'title', 'description', 'subject', 'gradeLevel', 'difficulty',
-      'estimatedTime', 'autoGrade', 'passScore', 'level', 'topic',
-      'skill', 'questions', 'isPublished',
-    ];
+    const fieldMap = {
+      title: 'title', description: 'description', subject: 'subject',
+      gradeLevel: 'grade_level', difficulty: 'difficulty',
+      estimatedTime: 'estimated_time', autoGrade: 'auto_grade',
+      passScore: 'pass_score', level: 'level', topic: 'topic',
+      skill: 'skill', questions: 'questions', isPublished: 'is_published',
+    };
 
-    updatable.forEach(field => {
-      if (req.body[field] !== undefined) {
-        worksheet[field] = req.body[field];
-      }
+    Object.entries(fieldMap).forEach(([bodyKey, dbKey]) => {
+      if (req.body[bodyKey] !== undefined) worksheet[dbKey] = req.body[bodyKey];
     });
 
     await worksheet.save();
 
-    const populated = await Worksheet.findById(worksheet._id)
-      .populate('createdBy', 'firstName lastName')
-      .lean();
-
-    res.status(200).json({
-      status: 'success',
-      data: { worksheet: { ...populated, id: populated._id } },
+    const populated = await Worksheet.findByPk(worksheet.id, {
+      include: [{ model: User, as: 'creator', attributes: ['id', 'firstName', 'lastName'] }],
     });
+
+    res.status(200).json({ status: 'success', data: { worksheet: populated } });
   } catch (err) {
     console.error('updateWorksheet error:', err);
     res.status(500).json({ status: 'error', message: 'Server error updating worksheet.' });
@@ -209,14 +190,14 @@ const deleteWorksheet = async (req, res) => {
       return res.status(403).json({ status: 'error', message: 'Only teachers can delete worksheets.' });
     }
 
-    const worksheet = await Worksheet.findById(req.params.id);
+    const worksheet = await Worksheet.findByPk(req.params.id);
     if (!worksheet) return res.status(404).json({ status: 'error', message: 'Worksheet not found.' });
 
-    if (worksheet.createdBy?.toString() !== req.user.id) {
+    if (worksheet.created_by !== req.user.id) {
       return res.status(403).json({ status: 'error', message: 'You do not own this worksheet.' });
     }
 
-    await worksheet.deleteOne();
+    await worksheet.destroy();
     res.status(200).json({ status: 'success', data: null });
   } catch (err) {
     console.error('deleteWorksheet error:', err);
@@ -226,7 +207,6 @@ const deleteWorksheet = async (req, res) => {
 
 /**
  * POST /worksheets/:id/publish
- * Toggles publish state (teacher only).
  */
 const togglePublish = async (req, res) => {
   try {
@@ -234,18 +214,19 @@ const togglePublish = async (req, res) => {
       return res.status(403).json({ status: 'error', message: 'Only teachers can publish worksheets.' });
     }
 
-    const worksheet = await Worksheet.findById(req.params.id);
+    const worksheet = await Worksheet.findByPk(req.params.id);
     if (!worksheet) return res.status(404).json({ status: 'error', message: 'Worksheet not found.' });
-    if (worksheet.createdBy?.toString() !== req.user.id) {
+
+    if (worksheet.created_by !== req.user.id) {
       return res.status(403).json({ status: 'error', message: 'Access denied.' });
     }
 
-    worksheet.isPublished = !worksheet.isPublished;
+    worksheet.is_published = !worksheet.is_published;
     await worksheet.save();
 
     res.status(200).json({
       status: 'success',
-      data: { worksheet: { id: worksheet._id, isPublished: worksheet.isPublished } },
+      data: { worksheet: { id: worksheet.id, isPublished: worksheet.is_published } },
     });
   } catch (err) {
     console.error('togglePublish error:', err);
