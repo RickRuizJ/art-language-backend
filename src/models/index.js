@@ -121,3 +121,15 @@ module.exports = {
   Submission,
   Assignment
 };
+
+// Submission ↔ Assignment
+
+Submission.belongsTo(Assignment, {
+  foreignKey: 'assignmentId',
+  as: 'assignment'
+});
+
+Assignment.hasMany(Submission, {
+  foreignKey: 'assignmentId',
+  as: 'submissions'
+});
