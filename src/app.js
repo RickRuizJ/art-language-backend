@@ -22,19 +22,6 @@ app.use(helmet({
 }));
 
 // CORS configuration
-// BUG FIX: The original used a single string origin. When the browser sends a
-// preflight OPTIONS request from Vercel, it is blocked if FRONTEND_URL is
-// missing from Render's environment variables, has a trailing slash, or differs
-// in any way from the exact value. The browser error looks identical to "no
-// token provided" because the request never actually reaches the auth middleware.
-//
-// Fix: use a function-based origin validator so:
-//   1. The explicit FRONTEND_URL env var is always accepted (set this in Render).
-//   2. Any *.vercel.app subdomain is accepted (covers preview deployments).
-//   3. localhost variants work for local development.
-//   4. Requests with no Origin header (curl, Postman, health checks) pass through.
-//
-// Required Render env var: FRONTEND_URL=https://art-language-frontend.vercel.app
 const allowedOrigins = [
   process.env.FRONTEND_URL,
   'http://localhost:3000',
@@ -44,13 +31,21 @@ const allowedOrigins = [
 const corsOptions = {
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
-    if (origin.endsWith('.vercel.app')) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    callback(new Error(`CORS: origin ${origin} not allowed`));
+
+    if (origin.endsWith('.vercel.app')) {
+      return callback(null, true);
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`CORS: origin ${origin} not allowed`));
   },
   credentials: true,
   optionsSuccessStatus: 200,
 };
+
 app.use(cors(corsOptions));
 
 // Rate limiting
