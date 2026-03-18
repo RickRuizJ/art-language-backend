@@ -1,8 +1,18 @@
+'use strict';
+/**
+ * models/Group.js
+ *
+ * BUGS FIXED:
+ * Same timestamp issue as Worksheet/User: model-level options block overrides
+ * the global define block in database.js. Added explicit createdAt/updatedAt
+ * mapping so Sequelize never queries "Group"."createdAt" (which doesn't exist).
+ * DB columns are created_at / updated_at (snake_case).
+ */
+
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 const User = require('./User');
 
-// Helper function to generate unique join code
 function generateJoinCode() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
@@ -49,7 +59,12 @@ const Group = sequelize.define('Group', {
     field: 'join_code'
   }
 }, {
-  tableName: 'groups'
+  tableName: 'groups',
+  timestamps: true,
+  underscored: true,
+  // FIX: Explicit timestamp column mapping
+  createdAt: 'created_at',
+  updatedAt: 'updated_at'
 });
 
 const GroupMember = sequelize.define('GroupMember', {
@@ -93,5 +108,4 @@ Group.hasMany(GroupMember, { foreignKey: 'groupId', as: 'members', onDelete: 'CA
 GroupMember.belongsTo(Group, { foreignKey: 'groupId', as: 'group' });
 GroupMember.belongsTo(User, { foreignKey: 'studentId', as: 'student' });
 
-// ─── CRITICAL FIX: Export both models ─────────────────────────────────────────
 module.exports = { Group, GroupMember };

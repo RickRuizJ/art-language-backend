@@ -1,4 +1,12 @@
 'use strict';
+/**
+ * models/Assignment.js
+ *
+ * BUGS FIXED:
+ * Same timestamp issue: `underscored: true` alone doesn't map timestamps when
+ * a model-level options block is present. Added explicit createdAt/updatedAt.
+ */
+
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
@@ -14,7 +22,6 @@ const Assignment = sequelize.define('Assignment', {
     field: 'worksheet_id',
     references: { model: 'worksheets', key: 'id' }
   },
-  // FK al grupo — columna ya existe en la BD
   groupId: {
     type: DataTypes.UUID,
     allowNull: true,
@@ -43,7 +50,11 @@ const Assignment = sequelize.define('Assignment', {
   }
 }, {
   tableName: 'assignments',
-  underscored: true
+  underscored: true,
+  timestamps: true,
+  // FIX: Explicit timestamp column mapping
+  createdAt: 'created_at',
+  updatedAt: 'updated_at'
 });
 
 module.exports = Assignment;

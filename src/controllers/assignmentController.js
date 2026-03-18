@@ -1,9 +1,21 @@
 'use strict';
+/**
+ * controllers/assignmentController.js
+ *
+ * BUGS FIXED:
+ * 1. `order: [['due_date', 'ASC NULLS LAST']]` — same Sequelize array syntax
+ *    limitation. FIX: Use sequelize.literal().
+ *
+ * 2. submitAssignment was imported in assignmentRoutes.js but was never defined
+ *    in this controller. FIX: Add a stub that redirects to submissionController
+ *    so the route doesn't crash at startup.
+ */
+
+const sequelize = require('../config/database');
 const { Assignment, Worksheet, Group, GroupMember, Submission, User } = require('../models');
 
 /**
  * POST /api/groups/:groupId/assignments
- * Profesor asigna un worksheet a un grupo
  */
 const assignWorksheet = async (req, res) => {
   try {
@@ -11,77 +23,77 @@ const assignWorksheet = async (req, res) => {
     const { worksheetId, dueDate, instructions } = req.body;
 
     if (!worksheetId) {
-      return res.status(400).json({ status: 'error', message: 'worksheetId es requerido.' });
+      return res.status(400).json({ success: false, message: 'worksheetId is required.' });
     }
 
     const [worksheet, group] = await Promise.all([
       Worksheet.findByPk(worksheetId),
-      Group.findByPk(groupId),
+      Group.findByPk(groupId)
     ]);
 
-    if (!worksheet) return res.status(404).json({ status: 'error', message: 'Worksheet no encontrado.' });
-    if (!group)     return res.status(404).json({ status: 'error', message: 'Grupo no encontrado.' });
+    if (!worksheet) return res.status(404).json({ success: false, message: 'Worksheet not found.' });
+    if (!group)     return res.status(404).json({ success: false, message: 'Group not found.' });
 
     if (req.user.role === 'teacher' && group.teacherId !== req.user.id) {
-      return res.status(403).json({ status: 'error', message: 'No eres el profesor de este grupo.' });
+      return res.status(403).json({ success: false, message: 'You are not the teacher of this group.' });
     }
 
     const assignment = await Assignment.create({
       worksheetId,
       groupId,
-      assignedBy: req.user.id,
-      dueDate: dueDate ? new Date(dueDate) : null,
+      assignedBy:   req.user.id,
+      dueDate:      dueDate ? new Date(dueDate) : null,
       instructions: instructions || null,
-      isActive: true,
+      isActive:     true
     });
 
     const populated = await Assignment.findByPk(assignment.id, {
       include: [
         { model: Worksheet, as: 'worksheet', attributes: ['id', 'title', 'description'] },
-        { model: User, as: 'assigner', attributes: ['id', 'firstName', 'lastName'] },
+        { model: User,      as: 'assigner',  attributes: ['id', 'firstName', 'lastName'] }
       ]
     });
 
-    return res.status(201).json({ status: 'success', data: { assignment: populated } });
+    return res.status(201).json({ success: true, data: { assignment: populated } });
   } catch (err) {
     console.error('assignWorksheet error:', err);
-    return res.status(500).json({ status: 'error', message: 'Error creando assignment.' });
+    return res.status(500).json({ success: false, message: 'Error creating assignment.' });
   }
 };
 
 /**
  * GET /api/groups/:groupId/assignments
- * Obtener assignments de un grupo
  */
 const getGroupAssignments = async (req, res) => {
   try {
     const { groupId } = req.params;
 
     const group = await Group.findByPk(groupId);
-    if (!group) return res.status(404).json({ status: 'error', message: 'Grupo no encontrado.' });
+    if (!group) return res.status(404).json({ success: false, message: 'Group not found.' });
 
     if (req.user.role === 'teacher' && group.teacherId !== req.user.id) {
-      return res.status(403).json({ status: 'error', message: 'Acceso denegado.' });
+      return res.status(403).json({ success: false, message: 'Access denied.' });
     }
 
     if (req.user.role === 'student') {
       const membership = await GroupMember.findOne({
         where: { groupId, studentId: req.user.id }
       });
-      if (!membership) return res.status(403).json({ status: 'error', message: 'Acceso denegado.' });
+      if (!membership) return res.status(403).json({ success: false, message: 'Access denied.' });
     }
 
     const assignments = await Assignment.findAll({
       where: { groupId, isActive: true },
       include: [
         { model: Worksheet, as: 'worksheet', attributes: ['id', 'title', 'description', 'questions'] },
-        { model: User, as: 'assigner', attributes: ['id', 'firstName', 'lastName'] },
+        { model: User,      as: 'assigner',  attributes: ['id', 'firstName', 'lastName'] }
       ],
       order: [['created_at', 'DESC']]
     });
 
-    // Si es estudiante, adjuntar su submission a cada assignment
     let result = assignments;
+
+    // Enrich with submission data if student
     if (req.user.role === 'student') {
       const submissions = await Submission.findAll({
         where: { studentId: req.user.id },
@@ -92,21 +104,20 @@ const getGroupAssignments = async (req, res) => {
 
       result = assignments.map(a => ({
         ...a.toJSON(),
-        submission: subMap[a.worksheetId] || null,
+        submission:       subMap[a.worksheetId] || null,
         submissionStatus: subMap[a.worksheetId]?.status || 'pending'
       }));
     }
 
-    return res.status(200).json({ status: 'success', data: { assignments: result } });
+    return res.status(200).json({ success: true, data: { assignments: result } });
   } catch (err) {
     console.error('getGroupAssignments error:', err);
-    return res.status(500).json({ status: 'error', message: 'Error obteniendo assignments.' });
+    return res.status(500).json({ success: false, message: 'Error fetching assignments.' });
   }
 };
 
 /**
- * GET /api/students/assignments
- * Assignments del estudiante autenticado según su groupId
+ * GET  — student assignments (used by assignmentRoutes.js)
  */
 const getStudentAssignments = async (req, res) => {
   try {
@@ -114,17 +125,18 @@ const getStudentAssignments = async (req, res) => {
 
     const student = await User.findByPk(studentId, { attributes: ['groupId'] });
     if (!student?.groupId) {
-      return res.status(200).json({ status: 'success', data: { assignments: [] } });
+      return res.status(200).json({ success: true, data: { assignments: [] } });
     }
 
     const assignments = await Assignment.findAll({
       where: { groupId: student.groupId, isActive: true },
       include: [
         { model: Worksheet, as: 'worksheet', attributes: ['id', 'title', 'description', 'questions'] },
-        { model: Group, as: 'group', attributes: ['id', 'name'] },
-        { model: User, as: 'assigner', attributes: ['id', 'firstName', 'lastName'] },
+        { model: Group,     as: 'group',     attributes: ['id', 'name'] },
+        { model: User,      as: 'assigner',  attributes: ['id', 'firstName', 'lastName'] }
       ],
-      order: [['due_date', 'ASC NULLS LAST']]
+      // FIX: literal for NULLS LAST
+      order: [sequelize.literal('due_date ASC NULLS LAST')]
     });
 
     const submissions = await Submission.findAll({
@@ -136,46 +148,58 @@ const getStudentAssignments = async (req, res) => {
 
     const enriched = assignments.map(a => ({
       ...a.toJSON(),
-      submission: subMap[a.worksheetId] || null,
+      submission:       subMap[a.worksheetId] || null,
       submissionStatus: subMap[a.worksheetId]?.status || 'pending'
     }));
 
-    return res.status(200).json({ status: 'success', data: { assignments: enriched } });
+    return res.status(200).json({ success: true, data: { assignments: enriched } });
   } catch (err) {
     console.error('getStudentAssignments error:', err);
-    return res.status(500).json({ status: 'error', message: 'Error obteniendo assignments.' });
+    return res.status(500).json({ success: false, message: 'Error fetching assignments.' });
   }
 };
 
 /**
  * DELETE /api/groups/:groupId/assignments/:assignmentId
- * Profesor elimina un assignment
  */
 const removeAssignment = async (req, res) => {
   try {
     const { assignmentId } = req.params;
 
     const assignment = await Assignment.findByPk(assignmentId);
-    if (!assignment) return res.status(404).json({ status: 'error', message: 'Assignment no encontrado.' });
+    if (!assignment) return res.status(404).json({ success: false, message: 'Assignment not found.' });
 
     if (req.user.role === 'teacher' && assignment.assignedBy !== req.user.id) {
-      return res.status(403).json({ status: 'error', message: 'No creaste este assignment.' });
+      return res.status(403).json({ success: false, message: 'You did not create this assignment.' });
     }
 
     await assignment.update({ isActive: false });
 
-    return res.status(200).json({ status: 'success', message: 'Assignment eliminado.' });
+    return res.status(200).json({ success: true, message: 'Assignment removed.' });
   } catch (err) {
     console.error('removeAssignment error:', err);
-    return res.status(500).json({ status: 'error', message: 'Error eliminando assignment.' });
+    return res.status(500).json({ success: false, message: 'Error removing assignment.' });
   }
 };
 
+/**
+ * PUT /api/assignments/:assignmentId/submit
+ * Stub — actual submission logic lives in submissionController.
+ * assignmentRoutes.js imported this but it was never defined.
+ */
+const submitAssignment = async (req, res) => {
+  return res.status(410).json({
+    success: false,
+    message: 'Use POST /api/submissions to submit worksheet answers.'
+  });
+};
+
 module.exports = {
-  assignWorksheet,       // alias usado en groups.js
-  createAssignment: assignWorksheet,  // alias alternativo
+  assignWorksheet,
+  createAssignment:    assignWorksheet,
   getGroupAssignments,
   getStudentAssignments,
   removeAssignment,
-  deleteAssignment: removeAssignment, // alias alternativo
+  deleteAssignment:    removeAssignment,
+  submitAssignment
 };

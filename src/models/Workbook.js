@@ -1,3 +1,22 @@
+'use strict';
+/**
+ * models/Workbook.js
+ *
+ * BUGS FIXED:
+ * The original model defined `createdAt` and `updatedAt` as explicit DataTypes
+ * column definitions AND set `timestamps: true, createdAt: 'createdAt'` in
+ * options. This creates a conflict:
+ *   - Sequelize sees the field definition and the timestamp option as two
+ *     separate things trying to own the same attribute name.
+ *   - `createdAt: 'createdAt'` (camelCase) also means the column name stays
+ *     camelCase, but the DB column is `created_at` — so queries fail.
+ *
+ * FIX:
+ *   - Remove the explicit DataTypes field definitions for createdAt/updatedAt.
+ *   - Set `createdAt: 'created_at'` and `updatedAt: 'updated_at'` in options
+ *     so Sequelize manages them correctly as snake_case DB columns.
+ */
+
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 const User = require('./User');
@@ -56,26 +75,19 @@ const Workbook = sequelize.define('Workbook', {
     type: DataTypes.BOOLEAN,
     defaultValue: true,
     field: 'is_active'
-  },
-  createdAt: {
-    type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW,
-    field: 'created_at'
-  },
-  updatedAt: {
-    type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW,
-    field: 'updated_at'
   }
+  // FIX: createdAt and updatedAt are NOT defined as DataTypes fields here.
+  // They are managed by Sequelize timestamps (see options below).
 }, {
   tableName: 'workbooks',
   timestamps: true,
-  underscored: false,
-  createdAt: 'createdAt',
-  updatedAt: 'updatedAt'
+  underscored: true,
+  // FIX: Map to snake_case DB columns
+  createdAt: 'created_at',
+  updatedAt: 'updated_at'
 });
 
-// WorkbookWorksheet junction model
+// ─── WorkbookWorksheet junction ───────────────────────────────────────────────
 const WorkbookWorksheet = sequelize.define('WorkbookWorksheet', {
   id: {
     type: DataTypes.UUID,
@@ -122,7 +134,7 @@ const WorkbookWorksheet = sequelize.define('WorkbookWorksheet', {
   ]
 });
 
-// FileUpload model
+// ─── FileUpload ───────────────────────────────────────────────────────────────
 const FileUpload = sequelize.define('FileUpload', {
   id: {
     type: DataTypes.UUID,
@@ -139,7 +151,7 @@ const FileUpload = sequelize.define('FileUpload', {
     field: 'original_filename'
   },
   filePath: {
-    type: DataTypes.TEXT, // CRITICAL FIX: Changed from STRING(1000) to TEXT for large base64
+    type: DataTypes.TEXT,
     allowNull: false,
     field: 'file_path'
   },
@@ -193,12 +205,11 @@ Workbook.belongsTo(User, {
   as: 'author'
 });
 
-// Note: Workbook↔Worksheet association is defined in models/index.js
-// to avoid circular dependency issues
-
 FileUpload.belongsTo(User, {
   foreignKey: 'uploadedBy',
   as: 'uploader'
 });
+
+// Note: Workbook↔Worksheet M:N association is defined in models/index.js
 
 module.exports = { Workbook, WorkbookWorksheet, FileUpload };

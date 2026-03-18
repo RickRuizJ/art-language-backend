@@ -1,3 +1,14 @@
+'use strict';
+/**
+ * models/User.js
+ *
+ * BUGS FIXED:
+ * Same timestamp issue as Worksheet: the model uses a custom options block
+ * which can override the global `define` block. Adding explicit
+ * `createdAt: 'created_at'` and `updatedAt: 'updated_at'` ensures Sequelize
+ * always maps to the correct snake_case DB columns.
+ */
+
 const { DataTypes } = require('sequelize');
 const bcrypt = require('bcryptjs');
 const sequelize = require('../config/database');
@@ -52,15 +63,11 @@ const User = sequelize.define('User', {
     field: 'is_active'
   },
 
-  /* NUEVO: grupo del estudiante */
-
   groupId: {
     type: DataTypes.UUID,
     allowNull: true,
     field: 'group_id'
   },
-
-  /* NUEVO: profesor asignado */
 
   teacherId: {
     type: DataTypes.UUID,
@@ -70,31 +77,30 @@ const User = sequelize.define('User', {
 
 }, {
   tableName: 'users',
+  timestamps: true,
+  underscored: true,
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
 
   hooks: {
-
     beforeCreate: async (user) => {
       if (user.password) {
         user.password = await bcrypt.hash(user.password, 10);
       }
     },
-
     beforeUpdate: async (user) => {
       if (user.changed('password')) {
         user.password = await bcrypt.hash(user.password, 10);
       }
     }
-
   }
 });
 
-/* INSTANCE METHODS */
-
-User.prototype.comparePassword = async function(candidatePassword) {
+User.prototype.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
-User.prototype.toJSON = function() {
+User.prototype.toJSON = function () {
   const values = Object.assign({}, this.get());
   delete values.password;
   return values;

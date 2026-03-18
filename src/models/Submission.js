@@ -1,3 +1,20 @@
+'use strict';
+/**
+ * models/Submission.js
+ *
+ * BUGS FIXED:
+ * 1. submissionController.js orders by `submittedAt` (camelCase JS attr) which
+ *    is fine because that IS the JS attribute name — Sequelize translates it
+ *    to the `submitted_at` column via `field` mapping. However the attribute
+ *    `worksheetId` was used in `findOne({ where: { worksheetId, studentId } })`
+ *    — Sequelize uses the JS attribute name in where clauses, so this is correct.
+ *
+ * 2. No timestamps: this model correctly has `timestamps: false` — it uses
+ *    `submittedAt` as a manual date field. No change needed here.
+ *
+ * This file is included for completeness and to confirm it is correct as-is.
+ */
+
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
