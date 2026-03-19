@@ -2,19 +2,41 @@
 /**
  * controllers/studentController.js
  *
- * BUGS FIXED:
- * 1. `order: [['dueDate', 'ASC NULLS LAST']]`
- *    Sequelize's array order syntax does NOT support multi-word direction
- *    strings like 'ASC NULLS LAST'. Sequelize will pass the direction literally
- *    to the DB which some Postgres versions reject, and Sequelize may also
- *    sanitize/quote it incorrectly.
- *    FIX: Use `sequelize.literal('due_date ASC NULLS LAST')` for this ordering.
+ * BUG FIXED — assignments not showing on student dashboard:
  *
- * 2. Same issue in getMyAssignments.
+ * The controller gated ALL assignment loading on `if (student.groupId)`,
+ * meaning it only looked at the `group_id` column on the `users` table.
+ * However, students join groups via the `group_members` junction table —
+ * `users.group_id` is frequently NULL even when the student IS in a group.
+ *
+ * FIX: When `student.groupId` is null, query `GroupMember` to find the
+ * student's group(s) and use that groupId for all downstream queries.
+ * This applies to getStudentDashboard, getMyGroup, and getMyAssignments.
+ *
+ * Also kept: `sequelize.literal('due_date ASC NULLS LAST')` for correct
+ * Postgres ordering (plain array syntax rejects multi-word directions).
  */
 
 const sequelize = require('../config/database');
 const { User, Group, Assignment, Worksheet, Submission, GroupMember } = require('../models');
+
+/**
+ * Resolve the effective groupId for a student.
+ * Checks users.group_id first; falls back to group_members table.
+ * Returns null if the student is not in any group.
+ */
+async function resolveGroupId(studentId, directGroupId) {
+  if (directGroupId) return directGroupId;
+
+  // Fall back: look up the most recent group_members entry
+  const membership = await GroupMember.findOne({
+    where: { studentId },
+    order: [['joined_at', 'DESC']],
+    attributes: ['groupId']
+  });
+
+  return membership?.groupId || null;
+}
 
 /**
  * GET /api/students/dashboard
@@ -23,7 +45,7 @@ const getStudentDashboard = async (req, res) => {
   try {
     const studentId = req.user.id;
 
-    // Student with their group
+    // 1. Load student with direct group association
     const student = await User.findByPk(studentId, {
       attributes: ['id', 'firstName', 'lastName', 'email', 'avatarUrl', 'groupId'],
       include: [{
@@ -40,26 +62,41 @@ const getStudentDashboard = async (req, res) => {
     });
 
     if (!student) {
-      return res.status(404).json({ success: false, message: 'Student not found.' });
+      return res.status(404).json({ message: 'Student not found.' });
     }
 
-    let assignments = [];
-    let stats = { total: 0, completed: 0, pending: 0, avgScore: null };
+    // 2. Resolve groupId — users.group_id OR group_members table
+    const effectiveGroupId = await resolveGroupId(studentId, student.groupId);
 
-    if (student.groupId) {
-      // Assignments for the group
+    let assignments = [];
+    let stats       = { total: 0, completed: 0, pending: 0, avgScore: null };
+    let groupData   = student.group || null;
+
+    if (effectiveGroupId) {
+      // Load group info if not already attached via users.group_id
+      if (!groupData) {
+        groupData = await Group.findByPk(effectiveGroupId, {
+          attributes: ['id', 'name', 'description', 'subject', 'gradeLevel'],
+          include: [{
+            model: User,
+            as: 'teacher',
+            attributes: ['id', 'firstName', 'lastName', 'avatarUrl']
+          }]
+        });
+      }
+
+      // 3. Assignments for the group
       const rawAssignments = await Assignment.findAll({
-        where: { groupId: student.groupId, isActive: true },
+        where: { groupId: effectiveGroupId, isActive: true },
         include: [{
           model: Worksheet,
           as: 'worksheet',
           attributes: ['id', 'title', 'description']
         }],
-        // FIX: Use literal() for NULLS LAST ordering
         order: [sequelize.literal('due_date ASC NULLS LAST')]
       });
 
-      // Student submissions
+      // 4. Student submissions
       const submissions = await Submission.findAll({
         where: { studentId },
         attributes: ['id', 'worksheetId', 'status', 'score', 'maxScore', 'submittedAt']
@@ -77,6 +114,7 @@ const getStudentDashboard = async (req, res) => {
         };
       });
 
+      // 5. Stats
       const completed = submissions.filter(s =>
         ['submitted', 'graded', 'reviewed'].includes(s.status)
       );
@@ -94,15 +132,22 @@ const getStudentDashboard = async (req, res) => {
       }
     }
 
+    // Build student object with resolved group attached
+    const studentJson = student.toJSON();
+    if (!studentJson.group && groupData) {
+      studentJson.group = groupData instanceof Object && typeof groupData.toJSON === 'function'
+        ? groupData.toJSON()
+        : groupData;
+    }
+
     return res.status(200).json({
-      success: true,
-      student: student.toJSON(),
+      student: studentJson,
       assignments,
       stats
     });
   } catch (err) {
     console.error('getStudentDashboard error:', err);
-    return res.status(500).json({ success: false, message: 'Internal error', error: err.message });
+    return res.status(500).json({ message: 'Internal error', error: err.message });
   }
 };
 
@@ -111,7 +156,9 @@ const getStudentDashboard = async (req, res) => {
  */
 const getMyGroup = async (req, res) => {
   try {
-    const student = await User.findByPk(req.user.id, {
+    const studentId = req.user.id;
+
+    const student = await User.findByPk(studentId, {
       attributes: ['id', 'firstName', 'groupId'],
       include: [{
         model: Group,
@@ -126,14 +173,30 @@ const getMyGroup = async (req, res) => {
       }]
     });
 
-    if (!student?.group) {
-      return res.status(200).json({ success: true, group: null, message: 'No group assigned.' });
+    // If direct group association exists, return it
+    if (student?.group) {
+      return res.status(200).json({ group: student.group });
     }
 
-    return res.status(200).json({ success: true, group: student.group });
+    // Fall back to group_members
+    const effectiveGroupId = await resolveGroupId(studentId, student?.groupId);
+    if (!effectiveGroupId) {
+      return res.status(200).json({ group: null, message: 'No group assigned.' });
+    }
+
+    const group = await Group.findByPk(effectiveGroupId, {
+      attributes: ['id', 'name', 'description', 'subject', 'gradeLevel', 'joinCode'],
+      include: [{
+        model: User,
+        as: 'teacher',
+        attributes: ['id', 'firstName', 'lastName', 'avatarUrl']
+      }]
+    });
+
+    return res.status(200).json({ group: group || null });
   } catch (err) {
     console.error('getMyGroup error:', err);
-    return res.status(500).json({ success: false, message: 'Internal error', error: err.message });
+    return res.status(500).json({ message: 'Internal error', error: err.message });
   }
 };
 
@@ -145,18 +208,19 @@ const getMyAssignments = async (req, res) => {
     const studentId = req.user.id;
     const student   = await User.findByPk(studentId, { attributes: ['groupId'] });
 
-    if (!student?.groupId) {
-      return res.status(200).json({ success: true, assignments: [], message: 'No group assigned.' });
+    const effectiveGroupId = await resolveGroupId(studentId, student?.groupId);
+
+    if (!effectiveGroupId) {
+      return res.status(200).json({ assignments: [], message: 'No group assigned.' });
     }
 
     const assignments = await Assignment.findAll({
-      where: { groupId: student.groupId, isActive: true },
+      where: { groupId: effectiveGroupId, isActive: true },
       include: [{
         model: Worksheet,
         as: 'worksheet',
         attributes: ['id', 'title', 'description']
       }],
-      // FIX: Use literal() for NULLS LAST
       order: [sequelize.literal('due_date ASC NULLS LAST')]
     });
 
@@ -174,10 +238,10 @@ const getMyAssignments = async (req, res) => {
       submissionStatus: subMap[a.worksheetId]?.status || 'pending'
     }));
 
-    return res.status(200).json({ success: true, assignments: result });
+    return res.status(200).json({ assignments: result });
   } catch (err) {
     console.error('getMyAssignments error:', err);
-    return res.status(500).json({ success: false, message: 'Internal error', error: err.message });
+    return res.status(500).json({ message: 'Internal error', error: err.message });
   }
 };
 
