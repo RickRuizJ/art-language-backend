@@ -2,40 +2,53 @@
 /**
  * controllers/studentController.js
  *
- * BUG FIXED — assignments not showing on student dashboard:
+ * ROOT CAUSE OF EMPTY ASSIGNMENTS:
  *
- * The controller gated ALL assignment loading on `if (student.groupId)`,
- * meaning it only looked at the `group_id` column on the `users` table.
- * However, students join groups via the `group_members` junction table —
- * `users.group_id` is frequently NULL even when the student IS in a group.
+ * Two compounding bugs caused assignments to always return []:
  *
- * FIX: When `student.groupId` is null, query `GroupMember` to find the
- * student's group(s) and use that groupId for all downstream queries.
- * This applies to getStudentDashboard, getMyGroup, and getMyAssignments.
+ * BUG A — resolveGroupId() only returned ONE groupId (findOne).
+ *   If the teacher assigned worksheets to group X but findOne returned
+ *   group Y, the WHERE groupId=Y found nothing.
  *
- * Also kept: `sequelize.literal('due_date ASC NULLS LAST')` for correct
- * Postgres ordering (plain array syntax rejects multi-word directions).
+ * BUG B — resolveGroupId() ordered by 'joined_at'.
+ *   The group_members table may not have a joined_at column (it is a custom
+ *   field defined only in the Sequelize model — no SQL migration created it).
+ *   ORDER BY "joined_at" throws SequelizeDatabaseError → the outer catch
+ *   returns 500, but assignments was already initialized as [] so the client
+ *   sees assignments:[].
+ *
+ * FIX:
+ *   resolveAllGroupIds() — fetches ALL groups the student belongs to from
+ *   BOTH users.group_id and every row in group_members (no ORDER BY).
+ *   Assignment.findAll uses WHERE group_id IN (...) covering all groups.
+ *   isActive uses Op.ne(false) to also match NULL rows.
+ *   ORDER BY uses created_at (a real column) instead of due_date.
  */
 
-const sequelize = require('../config/database');
+const { Op }    = require('sequelize');
 const { User, Group, Assignment, Worksheet, Submission, GroupMember } = require('../models');
 
 /**
- * Resolve the effective groupId for a student.
- * Checks users.group_id first; falls back to group_members table.
- * Returns null if the student is not in any group.
+ * Returns every groupId the student belongs to.
+ * Checks users.group_id AND all rows in group_members.
+ * No ORDER BY — avoids crash if joined_at column doesn't exist in the DB.
  */
-async function resolveGroupId(studentId, directGroupId) {
-  if (directGroupId) return directGroupId;
+async function resolveAllGroupIds(studentId, directGroupId) {
+  const ids = new Set();
 
-  // Fall back: look up the most recent group_members entry
-  const membership = await GroupMember.findOne({
-    where: { studentId },
-    order: [['joined_at', 'DESC']],
-    attributes: ['groupId']
-  });
+  if (directGroupId) ids.add(directGroupId);
 
-  return membership?.groupId || null;
+  try {
+    const memberships = await GroupMember.findAll({
+      where:      { studentId },
+      attributes: ['groupId']
+    });
+    memberships.forEach(m => { if (m.groupId) ids.add(m.groupId); });
+  } catch (err) {
+    console.error('resolveAllGroupIds GroupMember error:', err.message);
+  }
+
+  return [...ids];
 }
 
 /**
@@ -45,17 +58,17 @@ const getStudentDashboard = async (req, res) => {
   try {
     const studentId = req.user.id;
 
-    // 1. Load student with direct group association
+    // 1. Student with direct group association
     const student = await User.findByPk(studentId, {
       attributes: ['id', 'firstName', 'lastName', 'email', 'avatarUrl', 'groupId'],
       include: [{
-        model: Group,
-        as: 'group',
+        model:    Group,
+        as:       'group',
         required: false,
         attributes: ['id', 'name', 'description', 'subject', 'gradeLevel'],
         include: [{
-          model: User,
-          as: 'teacher',
+          model:      User,
+          as:         'teacher',
           attributes: ['id', 'firstName', 'lastName', 'avatarUrl']
         }]
       }]
@@ -65,40 +78,47 @@ const getStudentDashboard = async (req, res) => {
       return res.status(404).json({ message: 'Student not found.' });
     }
 
-    // 2. Resolve groupId — users.group_id OR group_members table
-    const effectiveGroupId = await resolveGroupId(studentId, student.groupId);
+    // 2. Collect every groupId this student belongs to
+    const groupIds = await resolveAllGroupIds(studentId, student.groupId);
 
     let assignments = [];
     let stats       = { total: 0, completed: 0, pending: 0, avgScore: null };
     let groupData   = student.group || null;
 
-    if (effectiveGroupId) {
-      // Load group info if not already attached via users.group_id
+    if (groupIds.length > 0) {
+      // Load group info if not attached via users.group_id
       if (!groupData) {
-        groupData = await Group.findByPk(effectiveGroupId, {
+        groupData = await Group.findByPk(groupIds[0], {
           attributes: ['id', 'name', 'description', 'subject', 'gradeLevel'],
           include: [{
-            model: User,
-            as: 'teacher',
+            model:      User,
+            as:         'teacher',
             attributes: ['id', 'firstName', 'lastName', 'avatarUrl']
           }]
         });
       }
 
-      // 3. Assignments for the group
+      // 3. Assignments for all the student's groups
+      const groupWhere = groupIds.length === 1
+        ? groupIds[0]
+        : { [Op.in]: groupIds };
+
       const rawAssignments = await Assignment.findAll({
-        where: { groupId: effectiveGroupId, isActive: true },
+        where: {
+          groupId:  groupWhere,
+          isActive: { [Op.ne]: false }   // catches TRUE and also NULL rows
+        },
         include: [{
-          model: Worksheet,
-          as: 'worksheet',
+          model:      Worksheet,
+          as:         'worksheet',
           attributes: ['id', 'title', 'description']
         }],
-        order: [sequelize.literal('due_date ASC NULLS LAST')]
+        order: [['created_at', 'DESC']]  // created_at always exists; avoids due_date issues
       });
 
       // 4. Student submissions
       const submissions = await Submission.findAll({
-        where: { studentId },
+        where:      { studentId },
         attributes: ['id', 'worksheetId', 'status', 'score', 'maxScore', 'submittedAt']
       });
 
@@ -118,7 +138,9 @@ const getStudentDashboard = async (req, res) => {
       const completed = submissions.filter(s =>
         ['submitted', 'graded', 'reviewed'].includes(s.status)
       );
-      const graded = submissions.filter(s => s.status === 'graded' && s.score !== null);
+      const graded = submissions.filter(s =>
+        s.status === 'graded' && s.score !== null
+      );
 
       stats.total     = assignments.length;
       stats.completed = completed.length;
@@ -132,19 +154,19 @@ const getStudentDashboard = async (req, res) => {
       }
     }
 
-    // Build student object with resolved group attached
     const studentJson = student.toJSON();
     if (!studentJson.group && groupData) {
-      studentJson.group = groupData instanceof Object && typeof groupData.toJSON === 'function'
+      studentJson.group = typeof groupData.toJSON === 'function'
         ? groupData.toJSON()
         : groupData;
     }
 
     return res.status(200).json({
-      student: studentJson,
+      student:     studentJson,
       assignments,
       stats
     });
+
   } catch (err) {
     console.error('getStudentDashboard error:', err);
     return res.status(500).json({ message: 'Internal error', error: err.message });
@@ -161,39 +183,38 @@ const getMyGroup = async (req, res) => {
     const student = await User.findByPk(studentId, {
       attributes: ['id', 'firstName', 'groupId'],
       include: [{
-        model: Group,
-        as: 'group',
+        model:    Group,
+        as:       'group',
         required: false,
         attributes: ['id', 'name', 'description', 'subject', 'gradeLevel', 'joinCode'],
         include: [{
-          model: User,
-          as: 'teacher',
+          model:      User,
+          as:         'teacher',
           attributes: ['id', 'firstName', 'lastName', 'avatarUrl']
         }]
       }]
     });
 
-    // If direct group association exists, return it
     if (student?.group) {
       return res.status(200).json({ group: student.group });
     }
 
-    // Fall back to group_members
-    const effectiveGroupId = await resolveGroupId(studentId, student?.groupId);
-    if (!effectiveGroupId) {
+    const groupIds = await resolveAllGroupIds(studentId, student?.groupId);
+    if (groupIds.length === 0) {
       return res.status(200).json({ group: null, message: 'No group assigned.' });
     }
 
-    const group = await Group.findByPk(effectiveGroupId, {
+    const group = await Group.findByPk(groupIds[0], {
       attributes: ['id', 'name', 'description', 'subject', 'gradeLevel', 'joinCode'],
       include: [{
-        model: User,
-        as: 'teacher',
+        model:      User,
+        as:         'teacher',
         attributes: ['id', 'firstName', 'lastName', 'avatarUrl']
       }]
     });
 
     return res.status(200).json({ group: group || null });
+
   } catch (err) {
     console.error('getMyGroup error:', err);
     return res.status(500).json({ message: 'Internal error', error: err.message });
@@ -207,25 +228,31 @@ const getMyAssignments = async (req, res) => {
   try {
     const studentId = req.user.id;
     const student   = await User.findByPk(studentId, { attributes: ['groupId'] });
+    const groupIds  = await resolveAllGroupIds(studentId, student?.groupId);
 
-    const effectiveGroupId = await resolveGroupId(studentId, student?.groupId);
-
-    if (!effectiveGroupId) {
+    if (groupIds.length === 0) {
       return res.status(200).json({ assignments: [], message: 'No group assigned.' });
     }
 
+    const groupWhere = groupIds.length === 1
+      ? groupIds[0]
+      : { [Op.in]: groupIds };
+
     const assignments = await Assignment.findAll({
-      where: { groupId: effectiveGroupId, isActive: true },
+      where: {
+        groupId:  groupWhere,
+        isActive: { [Op.ne]: false }
+      },
       include: [{
-        model: Worksheet,
-        as: 'worksheet',
+        model:      Worksheet,
+        as:         'worksheet',
         attributes: ['id', 'title', 'description']
       }],
-      order: [sequelize.literal('due_date ASC NULLS LAST')]
+      order: [['created_at', 'DESC']]
     });
 
     const submissions = await Submission.findAll({
-      where: { studentId },
+      where:      { studentId },
       attributes: ['id', 'worksheetId', 'status', 'score', 'maxScore', 'submittedAt']
     });
 
@@ -239,6 +266,7 @@ const getMyAssignments = async (req, res) => {
     }));
 
     return res.status(200).json({ assignments: result });
+
   } catch (err) {
     console.error('getMyAssignments error:', err);
     return res.status(500).json({ message: 'Internal error', error: err.message });
