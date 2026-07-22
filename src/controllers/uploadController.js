@@ -1,8 +1,10 @@
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
+const cloudinary = require('../config/cloudinary');
 const { Worksheet, Workbook, WorkbookWorksheet, FileUpload } = require('../models');
+const logger = require('../config/logger');
 
-// ─── Multer — memory storage (no disk writes; Railway has no persistent FS) ─
+// ─── Multer — memory storage (no disk writes; Render has no persistent FS) ──
 const ALLOWED_MIMES = {
   'application/pdf': '.pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
@@ -25,9 +27,29 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
 });
 
-// ─── Helper ───────────────────────────────────────────────────────────────────
-function bufferToDataUrl(buffer, mimetype) {
-  return `data:${mimetype};base64,${buffer.toString('base64')}`;
+// ─── SPRINT 0 FIX ───────────────────────────────────────────────────────────
+// Previously: files were base64-encoded and stored directly in the Postgres
+// `file_uploads.file_path` TEXT column (via bufferToDataUrl). This does not
+// scale ("hundreds of thousands of worksheets") and left the already-
+// configured Cloudinary client (src/config/cloudinary.js) completely unused.
+//
+// FIX: stream the buffer to Cloudinary and store only the returned secure_url
+// + public_id in Postgres. `resource_type: 'auto'` lets Cloudinary handle
+// PDFs (as 'raw'/'image') and image types correctly without us branching.
+function uploadBufferToCloudinary(buffer, { folder, filename, mimetype }) {
+  return new Promise((resolve, reject) => {
+    const resourceType = mimetype === 'application/pdf' ? 'raw' : 'auto';
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder,
+        public_id: filename.replace(/\.[^/.]+$/, ''),
+        resource_type: resourceType,
+        overwrite: false,
+      },
+      (error, result) => (error ? reject(error) : resolve(result))
+    );
+    stream.end(buffer);
+  });
 }
 
 // ─── CRITICAL FIX: Ensure workbook exists or create default ──────────────────
@@ -82,32 +104,34 @@ exports.uploadWorksheet = [
       if (!title || !title.trim()) {
         return res.status(400).json({ success: false, message: 'Title is required.' });
       }
-
-      // CRITICAL FIX: Ensure file is not too large for base64 storage
-      if (req.file.size > 5 * 1024 * 1024) { // 5MB limit for base64
-        return res.status(400).json({ 
-          success: false, 
-          message: 'File too large for upload. Maximum size is 5MB.' 
-        });
-      }
+      // 10MB multer limit above is now the only size gate — no separate
+      // base64 5MB cap needed since we no longer store the file in Postgres.
 
       const fileId   = uuidv4();
       const ext      = ALLOWED_MIMES[req.file.mimetype] || '';
       const filename = `${fileId}${ext}`;
-      const dataUrl  = bufferToDataUrl(req.file.buffer, req.file.mimetype);
 
-      console.log(`[UPLOAD] User ${req.user.id} uploading file: ${req.file.originalname} (${req.file.size} bytes)`);
+      logger.info(`[UPLOAD] User ${req.user.id} uploading file: ${req.file.originalname} (${req.file.size} bytes)`);
 
       // CRITICAL FIX: Ensure workbook exists
       const finalWorkbookId = await ensureWorkbook(workbookId, req.user.id);
-      console.log(`[UPLOAD] Assigned to workbook: ${finalWorkbookId}`);
+      logger.info(`[UPLOAD] Assigned to workbook: ${finalWorkbookId}`);
 
-      // 1) Persist file record
+      // Upload the actual bytes to Cloudinary — Postgres never sees the file.
+      const cloudinaryResult = await uploadBufferToCloudinary(req.file.buffer, {
+        folder: `art-language/worksheets/${req.user.id}`,
+        filename,
+        mimetype: req.file.mimetype,
+      });
+      logger.info(`[UPLOAD] Cloudinary stored: ${cloudinaryResult.secure_url}`);
+
+      // 1) Persist file record — filePath now holds the Cloudinary secure_url,
+      //    not a base64 data URL.
       const fileRecord = await FileUpload.create({
         id: fileId,
         filename,
         originalFilename: req.file.originalname,
-        filePath: dataUrl,
+        filePath: cloudinaryResult.secure_url,
         fileSize: req.file.size,
         mimeType: req.file.mimetype,
         uploadedBy: req.user.id,
@@ -128,7 +152,7 @@ exports.uploadWorksheet = [
         difficulty: 'beginner',
       });
 
-      console.log(`[UPLOAD] Created worksheet: ${worksheet.id}`);
+      logger.info(`[UPLOAD] Created worksheet: ${worksheet.id}`);
 
       // 3) Link file → worksheet
       await fileRecord.update({ entityId: worksheet.id });
@@ -144,7 +168,7 @@ exports.uploadWorksheet = [
         displayOrder: (maxOrder || 0) + 1,
       });
 
-      console.log(`[UPLOAD] Linked worksheet ${worksheet.id} to workbook ${finalWorkbookId}`);
+      logger.info(`[UPLOAD] Linked worksheet ${worksheet.id} to workbook ${finalWorkbookId}`);
 
       res.status(201).json({
         success: true,
@@ -163,11 +187,11 @@ exports.uploadWorksheet = [
         },
       });
     } catch (error) {
-      console.error('[UPLOAD ERROR] Full error:', error);
-      console.error('[UPLOAD ERROR] Name:', error.name);
-      console.error('[UPLOAD ERROR] Message:', error.message);
-      if (error.stack) console.error('[UPLOAD ERROR] Stack:', error.stack);
-      if (error.parent) console.error('[UPLOAD ERROR] DB error:', error.parent);
+      logger.error('[UPLOAD ERROR] Full error:', error);
+      logger.error(`[UPLOAD ERROR] Name: ${error.name}`);
+      logger.error(`[UPLOAD ERROR] Message: ${error.message}`);
+      if (error.stack) logger.error(`[UPLOAD ERROR] Stack: ${error.stack}`);
+      if (error.parent) logger.error('[UPLOAD ERROR] DB error:', error.parent);
       
       if (error.message && error.message.includes('File type not supported')) {
         return res.status(400).json({ success: false, message: error.message });
@@ -206,11 +230,11 @@ exports.saveGoogleLink = async (req, res) => {
       });
     }
 
-    console.log(`[GOOGLE LINK] User ${req.user.id} saving link: ${url.substring(0, 50)}...`);
+    logger.info(`[GOOGLE LINK] User ${req.user.id} saving link: ${url.substring(0, 50)}...`);
 
     // CRITICAL FIX: Ensure workbook exists
     const finalWorkbookId = await ensureWorkbook(workbookId, req.user.id);
-    console.log(`[GOOGLE LINK] Assigned to workbook: ${finalWorkbookId}`);
+    logger.info(`[GOOGLE LINK] Assigned to workbook: ${finalWorkbookId}`);
 
     // Detect type
     let googleType = 'doc';
@@ -245,7 +269,7 @@ exports.saveGoogleLink = async (req, res) => {
       difficulty: 'beginner',
     });
 
-    console.log(`[GOOGLE LINK] Created worksheet: ${worksheet.id}`);
+    logger.info(`[GOOGLE LINK] Created worksheet: ${worksheet.id}`);
 
     // CRITICAL FIX: ALWAYS add to workbook
     const maxOrder = await WorkbookWorksheet.max('displayOrder', { 
@@ -258,7 +282,7 @@ exports.saveGoogleLink = async (req, res) => {
       displayOrder: (maxOrder || 0) + 1,
     });
 
-    console.log(`[GOOGLE LINK] Linked worksheet ${worksheet.id} to workbook ${finalWorkbookId}`);
+    logger.info(`[GOOGLE LINK] Linked worksheet ${worksheet.id} to workbook ${finalWorkbookId}`);
 
     res.status(201).json({
       success: true,
@@ -271,7 +295,7 @@ exports.saveGoogleLink = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('[GOOGLE LINK ERROR]', error);
+    logger.error('[GOOGLE LINK ERROR]', error);
     
     if (error.message && error.message.includes('Workbook not found')) {
       return res.status(404).json({ success: false, message: error.message });
@@ -282,7 +306,17 @@ exports.saveGoogleLink = async (req, res) => {
 };
 
 // ─── GET /api/worksheets/:id/file ─────────────────────────────────────────────
-// Returns the base64 data-URL for an uploaded file so the frontend can render it.
+// Returns the Cloudinary URL for an uploaded file so the frontend can render it.
+// SPRINT 0 FIX: `filePath` now holds a Cloudinary secure_url instead of a
+// base64 data URL. We keep `dataUrl` in the response for backward
+// compatibility with the current frontend (it just treats it as a URL /
+// <iframe src> already), and add `fileUrl` as the clearer forward-looking key.
+//
+// TODO
+// Eliminar completamente dataUrl cuando el frontend utilice únicamente fileUrl.
+//
+// Objetivo:
+// Sprint 1 o Sprint 2.
 exports.getWorksheetFile = async (req, res) => {
   try {
     const fileRecord = await FileUpload.findOne({
@@ -303,11 +337,12 @@ exports.getWorksheetFile = async (req, res) => {
         originalFilename: fileRecord.originalFilename,
         mimeType: fileRecord.mimeType,
         fileSize: fileRecord.fileSize,
-        dataUrl: fileRecord.filePath,
+        fileUrl: fileRecord.filePath,
+        dataUrl: fileRecord.filePath, // TODO: eliminar — ver nota arriba (objetivo Sprint 1 o 2)
       },
     });
   } catch (error) {
-    console.error('Get file error:', error);
+    logger.error('Get file error:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch file' });
   }
 };

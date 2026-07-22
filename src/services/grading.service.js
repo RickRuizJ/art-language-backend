@@ -2,19 +2,37 @@ const logger = require('../config/logger');
 
 /**
  * Grading Service
- * 
- * Server-side autograde engine for worksheets
- * SECURITY: All grading logic MUST run server-side
- * 
- * Supports 5 question types:
- * - multiple-choice
- * - checkbox
- * - short-answer
+ *
+ * Server-side autograde engine for worksheets.
+ * SECURITY: All grading logic MUST run server-side.
+ *
+ * SPRINT 0 FIX — single source of truth for autograding:
+ * This service previously used hyphenated type names ('multiple-choice',
+ * 'short-answer', 'ordering'...) and was never imported anywhere — instead
+ * submissionController.js had its own separate, simpler `autoGrade()`
+ * function using underscore type names ('multiple_choice', 'fill_blank'...),
+ * which is what the worksheet builder (frontend) actually produces.
+ *
+ * FIX: this service is now the ONLY grading engine in the codebase.
+ * Type names are unified to the underscore convention used everywhere else
+ * (QUESTION_TYPES in worksheets/builder/page.js). submissionController.js no
+ * longer has its own grading logic — it calls gradingService.gradeSubmission().
+ *
+ * Supported types (Interactive PDF Worksheet Engine v1 scope):
+ * - multiple_choice
+ * - true_false
+ * - fill_blank
  * - matching
+ *
+ * Kept for backward compatibility with worksheets created by the older
+ * form-based builder (not part of the PDF engine's first version):
+ * - checkbox
+ * - short_answer
  * - ordering
+ * - essay (always requires manual review — never auto-scored)
  */
 class GradingService {
-  
+
   /**
    * Grade a complete submission
    * @param {Object} worksheet - Worksheet with questions
@@ -38,17 +56,18 @@ class GradingService {
 
       for (const question of questions) {
         maxScore += question.points || 0;
-        
+
         const studentAnswer = answers[question.id];
         const result = this.gradeQuestion(question, studentAnswer);
-        
-        totalScore += result.pointsEarned;
+
+        totalScore += result.pointsEarned || 0;
         feedback.push({
           questionId: question.id,
           correct: result.correct,
           pointsEarned: result.pointsEarned,
           maxPoints: question.points,
-          feedback: result.feedback
+          feedback: result.feedback,
+          requiresManualReview: result.requiresManualReview || false
         });
       }
 
@@ -77,18 +96,25 @@ class GradingService {
    */
   gradeQuestion(question, answer) {
     const type = question.type;
-    
+
     switch (type) {
-      case 'multiple-choice':
+      case 'multiple_choice':
         return this.gradeMultipleChoice(question, answer);
-      case 'checkbox':
-        return this.gradeCheckbox(question, answer);
-      case 'short-answer':
-        return this.gradeShortAnswer(question, answer);
+      case 'true_false':
+        return this.gradeTrueFalse(question, answer);
+      case 'fill_blank':
+        return this.gradeFillBlank(question, answer);
       case 'matching':
         return this.gradeMatching(question, answer);
+      // Backward compatibility with the older form-based builder:
+      case 'checkbox':
+        return this.gradeCheckbox(question, answer);
+      case 'short_answer':
+        return this.gradeShortAnswer(question, answer);
       case 'ordering':
         return this.gradeOrdering(question, answer);
+      case 'essay':
+        return { correct: null, pointsEarned: null, feedback: 'Pending manual review.', requiresManualReview: true };
       default:
         logger.warn(`Unknown question type: ${type}`);
         return {
@@ -101,17 +127,59 @@ class GradingService {
 
   /**
    * Grade multiple choice question
-   * Answer format: number (index of selected option)
+   * Answer format: the value/id of the selected option (matches what the
+   * worksheet builder + PDF engine element config store as correctAnswer)
    */
   gradeMultipleChoice(question, answer) {
     const isCorrect = answer === question.correctAnswer;
-    
+
     return {
       correct: isCorrect,
       pointsEarned: isCorrect ? question.points : 0,
-      feedback: isCorrect 
-        ? 'Correct!' 
-        : `Incorrect. Correct answer: ${question.options[question.correctAnswer]}`
+      feedback: isCorrect
+        ? 'Correct!'
+        : `Incorrect. Correct answer: ${question.correctAnswer}`
+    };
+  }
+
+  /**
+   * Grade true/false question
+   * Answer format: boolean or 'true'/'false' string
+   */
+  gradeTrueFalse(question, answer) {
+    const normalize = (v) => (typeof v === 'string' ? v.toLowerCase().trim() : v);
+    const isCorrect = normalize(answer) === normalize(question.correctAnswer);
+
+    return {
+      correct: isCorrect,
+      pointsEarned: isCorrect ? question.points : 0,
+      feedback: isCorrect ? 'Correct!' : `Incorrect. Correct answer: ${question.correctAnswer}`
+    };
+  }
+
+  /**
+   * Grade fill-in-the-blank question
+   * Answer format: string. correctAnswer may be a string or an array of
+   * acceptable strings. Case-insensitive by default unless
+   * question.caseSensitive is true.
+   */
+  gradeFillBlank(question, answer) {
+    if (typeof answer !== 'string') {
+      return { correct: false, pointsEarned: 0, feedback: 'Invalid answer format' };
+    }
+
+    const acceptable = Array.isArray(question.correctAnswer)
+      ? question.correctAnswer
+      : [question.correctAnswer];
+
+    const normalize = (v) => (question.caseSensitive ? v.trim() : v.trim().toLowerCase());
+    const studentAnswer = normalize(answer);
+    const isCorrect = acceptable.some(a => normalize(String(a)) === studentAnswer);
+
+    return {
+      correct: isCorrect,
+      pointsEarned: isCorrect ? question.points : 0,
+      feedback: isCorrect ? 'Correct!' : `Incorrect. Correct answer: ${acceptable[0]}`
     };
   }
 

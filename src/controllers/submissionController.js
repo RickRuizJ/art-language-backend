@@ -1,94 +1,34 @@
 const { Submission, Worksheet, User } = require('../models');
+const gradingService = require('../services/grading.service');
+const logger = require('../config/logger');
 
-// Auto-grade function
-const autoGrade = (worksheet, answers) => {
-  let score = 0;
-  let maxScore = 0;
-  const gradedAnswers = [];
+/**
+ * SPRINT 0 FIX — unified grading engine
+ * The local `autoGrade()` function that used to live here has been removed.
+ * Grading now always goes through services/grading.service.js — the single
+ * autograde engine used by the whole LMS (see that file's header comment).
+ *
+ * Adapter: the client submits `answers` as an array of
+ * { questionId, answer }, but gradingService.gradeSubmission expects a plain
+ * { [questionId]: answer } map. This function only reshapes data — no
+ * grading logic lives here anymore.
+ */
+function answersArrayToMap(answers) {
+  const map = {};
+  (answers || []).forEach(a => { map[a.questionId] = a.answer; });
+  return map;
+}
 
-  worksheet.questions.forEach((question) => {
-    maxScore += question.points || 10;
-    const studentAnswer = answers.find(a => a.questionId === question.id);
-    
-    if (!studentAnswer) {
-      gradedAnswers.push({
-        questionId: question.id,
-        answer: null,
-        isCorrect: false,
-        pointsEarned: 0
-      });
-      return;
-    }
-
-    let isCorrect = false;
-    let pointsEarned = 0;
-
-    switch (question.type) {
-      case 'multiple_choice':
-      case 'true_false':
-        isCorrect = studentAnswer.answer === question.correctAnswer;
-        pointsEarned = isCorrect ? (question.points || 10) : 0;
-        break;
-
-      case 'fill_blank':
-        const correctAnswers = Array.isArray(question.correctAnswer) 
-          ? question.correctAnswer 
-          : [question.correctAnswer];
-        isCorrect = correctAnswers.some(correct => 
-          studentAnswer.answer?.toLowerCase().trim() === correct.toLowerCase().trim()
-        );
-        pointsEarned = isCorrect ? (question.points || 10) : 0;
-        break;
-
-      case 'matching':
-        // Expect studentAnswer.answer to be object: { "a": "1", "b": "2" }
-        const correctMatches = question.correctAnswer || {};
-        const studentMatches = studentAnswer.answer || {};
-        const totalMatches = Object.keys(correctMatches).length;
-        let correctCount = 0;
-        
-        Object.keys(correctMatches).forEach(key => {
-          if (studentMatches[key] === correctMatches[key]) {
-            correctCount++;
-          }
-        });
-        
-        isCorrect = correctCount === totalMatches;
-        pointsEarned = (correctCount / totalMatches) * (question.points || 10);
-        break;
-
-      case 'short_answer':
-      case 'essay':
-        // Manual grading required
-        isCorrect = null;
-        pointsEarned = null;
-        break;
-    }
-
-    score += pointsEarned || 0;
-    
-    gradedAnswers.push({
-      questionId: question.id,
-      answer: studentAnswer.answer,
-      isCorrect,
-      pointsEarned
-    });
-  });
-
-  return {
-    answers: gradedAnswers,
-    score: Math.round(score * 100) / 100,
-    maxScore,
-    percentage: Math.round((score / maxScore) * 100)
-  };
-};
+// SPRINT 0 FIX — multiple configurable attempts.
+// `Worksheet.maxAttempts` (added in this sprint's migration; null/0 = unlimited)
+// replaces the previous hard block on any second submission.
 
 // @route   POST /api/submissions
 // @desc    Submit worksheet answers
 // @access  Private (Student)
 exports.submitWorksheet = async (req, res) => {
   try {
-    const { worksheetId, answers } = req.body;
+    const { worksheetId, answers, timeSpentSeconds } = req.body;
 
     // Find worksheet
     const worksheet = await Worksheet.findByPk(worksheetId);
@@ -99,38 +39,51 @@ exports.submitWorksheet = async (req, res) => {
       });
     }
 
-    // Check if already submitted
-    const existing = await Submission.findOne({
-      where: {
-        worksheetId,
-        studentId: req.user.id
-      }
+    // How many attempts has this student already made on this worksheet?
+    const previousAttempts = await Submission.count({
+      where: { worksheetId, studentId: req.user.id }
     });
 
-    if (existing) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Worksheet already submitted' 
+    const maxAttempts = worksheet.maxAttempts; // null/0 = unlimited
+    if (maxAttempts && previousAttempts >= maxAttempts) {
+      return res.status(400).json({
+        success: false,
+        message: `Maximum attempts reached (${maxAttempts}).`
       });
     }
 
-    // Auto-grade if enabled
+    // Auto-grade if enabled — always via the unified gradingService.
     let gradingResult;
     let status = 'pending';
 
     if (worksheet.autoGrade) {
-      gradingResult = autoGrade(worksheet, answers);
+      const answersMap = answersArrayToMap(answers);
+      gradingResult = await gradingService.gradeSubmission(worksheet, answersMap);
       status = 'graded';
     }
+
+    // Reshape gradingService's feedback[] back into the answers[] format the
+    // rest of the app already expects (isCorrect/pointsEarned per question).
+    const gradedAnswers = gradingResult
+      ? gradingResult.feedback.map(f => ({
+          questionId: f.questionId,
+          answer: answersArrayToMap(answers)[f.questionId] ?? null,
+          isCorrect: f.correct,
+          pointsEarned: f.pointsEarned,
+          requiresManualReview: f.requiresManualReview
+        }))
+      : answers;
 
     // Create submission
     const submission = await Submission.create({
       worksheetId,
       studentId: req.user.id,
-      answers: gradingResult?.answers || answers,
-      score: gradingResult?.score || null,
-      maxScore: gradingResult?.maxScore || null,
-      status
+      answers: gradedAnswers,
+      score: gradingResult?.score ?? null,
+      maxScore: gradingResult?.maxScore ?? null,
+      status,
+      attemptNumber: previousAttempts + 1,
+      timeSpentSeconds: timeSpentSeconds ?? null
     });
 
     res.status(201).json({
@@ -138,6 +91,8 @@ exports.submitWorksheet = async (req, res) => {
       message: 'Worksheet submitted successfully',
       data: { 
         submission,
+        attemptNumber: submission.attemptNumber,
+        attemptsRemaining: maxAttempts ? Math.max(0, maxAttempts - submission.attemptNumber) : null,
         ...(gradingResult && { 
           score: gradingResult.score,
           maxScore: gradingResult.maxScore,
@@ -146,7 +101,7 @@ exports.submitWorksheet = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Submit worksheet error:', error);
+    logger.error('Submit worksheet error:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Server error' 
@@ -184,7 +139,7 @@ exports.getStudentSubmissions = async (req, res) => {
       data: { submissions }
     });
   } catch (error) {
-    console.error('Get student submissions error:', error);
+    logger.error('Get student submissions error:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Server error' 
@@ -229,7 +184,7 @@ exports.getWorksheetSubmissions = async (req, res) => {
       data: { submissions }
     });
   } catch (error) {
-    console.error('Get worksheet submissions error:', error);
+    logger.error('Get worksheet submissions error:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Server error' 
@@ -281,7 +236,7 @@ exports.gradeSubmission = async (req, res) => {
       data: { submission }
     });
   } catch (error) {
-    console.error('Grade submission error:', error);
+    logger.error('Grade submission error:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Server error' 
@@ -336,7 +291,7 @@ exports.getSubmission = async (req, res) => {
       data: { submission }
     });
   } catch (error) {
-    console.error('Get submission error:', error);
+    logger.error('Get submission error:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Server error' 

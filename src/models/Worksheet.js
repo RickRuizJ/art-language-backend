@@ -89,6 +89,14 @@ const Worksheet = sequelize.define('Worksheet', {
     type: DataTypes.BOOLEAN,
     defaultValue: true,
     field: 'is_published'
+  },
+  // SPRINT 0 ADDITION — configurable multiple attempts per worksheet.
+  // null or 0 = unlimited attempts. Enforced in submissionController.js.
+  maxAttempts: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    defaultValue: 1,
+    field: 'max_attempts'
   }
 }, {
   tableName: 'worksheets',
@@ -97,7 +105,17 @@ const Worksheet = sequelize.define('Worksheet', {
   // column names, regardless of how the global define block is configured.
   timestamps: true,
   createdAt: 'created_at',
-  updatedAt: 'updated_at'
+  updatedAt: 'updated_at',
+  // SPRINT 0 ADDITION — getWorksheets() filters on subject/gradeLevel/
+  // difficulty/createdBy and orders by created_at with no supporting index
+  // today. These cover the hot paths at current query volume.
+  indexes: [
+    { fields: ['created_by'] },
+    { fields: ['subject'] },
+    { fields: ['grade_level'] },
+    { fields: ['is_published'] },
+    { fields: ['created_at'] }
+  ]
 });
 
 // NOTE: Worksheet.belongsTo(User, { as: 'creator' }) is defined in models/index.js

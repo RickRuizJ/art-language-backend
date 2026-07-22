@@ -22,6 +22,7 @@
 const { Op } = require('sequelize');
 const Worksheet = require('../models/Worksheet');
 const User      = require('../models/User');
+const logger    = require('../config/logger');
 
 // ─── GET /api/worksheets ──────────────────────────────────────────────────────
 const getWorksheets = async (req, res) => {
@@ -79,7 +80,7 @@ const getWorksheets = async (req, res) => {
       }
     });
   } catch (err) {
-    console.error('getWorksheets error:', err);
+    logger.error('getWorksheets error:', err);
     res.status(500).json({ success: false, message: 'Server error retrieving worksheets.' });
   }
 };
@@ -111,7 +112,7 @@ const getWorksheet = async (req, res) => {
 
     res.status(200).json({ success: true, data: { worksheet } });
   } catch (err) {
-    console.error('getWorksheet error:', err);
+    logger.error('getWorksheet error:', err);
     res.status(500).json({ success: false, message: 'Server error.' });
   }
 };
@@ -126,7 +127,7 @@ const createWorksheet = async (req, res) => {
     const {
       title, description, subject, gradeLevel,
       difficulty, estimatedTime, autoGrade, passScore,
-      questions, isPublished
+      questions, isPublished, maxAttempts
     } = req.body;
 
     if (!title || !title.trim()) {
@@ -147,7 +148,8 @@ const createWorksheet = async (req, res) => {
       passScore:     passScore || 70,
       questions,
       createdBy:     req.user.id,
-      isPublished:   isPublished !== false
+      isPublished:   isPublished !== false,
+      maxAttempts:   maxAttempts !== undefined ? maxAttempts : 1
     });
 
     const populated = await Worksheet.findByPk(worksheet.id, {
@@ -156,7 +158,7 @@ const createWorksheet = async (req, res) => {
 
     res.status(201).json({ success: true, data: { worksheet: populated } });
   } catch (err) {
-    console.error('createWorksheet error:', err);
+    logger.error('createWorksheet error:', err);
     res.status(500).json({ success: false, message: 'Server error creating worksheet.' });
   }
 };
@@ -179,7 +181,7 @@ const updateWorksheet = async (req, res) => {
     const allowed = [
       'title', 'description', 'subject', 'gradeLevel',
       'difficulty', 'estimatedTime', 'autoGrade', 'passScore',
-      'questions', 'isPublished'
+      'questions', 'isPublished', 'maxAttempts'
     ];
     allowed.forEach(f => {
       if (req.body[f] !== undefined) worksheet[f] = req.body[f];
@@ -192,7 +194,7 @@ const updateWorksheet = async (req, res) => {
 
     res.status(200).json({ success: true, data: { worksheet: populated } });
   } catch (err) {
-    console.error('updateWorksheet error:', err);
+    logger.error('updateWorksheet error:', err);
     res.status(500).json({ success: false, message: 'Server error updating worksheet.' });
   }
 };
@@ -215,7 +217,7 @@ const deleteWorksheet = async (req, res) => {
     await worksheet.destroy();
     res.status(200).json({ success: true, message: 'Worksheet deleted.' });
   } catch (err) {
-    console.error('deleteWorksheet error:', err);
+    logger.error('deleteWorksheet error:', err);
     res.status(500).json({ success: false, message: 'Server error.' });
   }
 };
@@ -243,7 +245,7 @@ const togglePublish = async (req, res) => {
       data: { worksheet: { id: worksheet.id, isPublished: worksheet.isPublished } }
     });
   } catch (err) {
-    console.error('togglePublish error:', err);
+    logger.error('togglePublish error:', err);
     res.status(500).json({ success: false, message: 'Server error.' });
   }
 };

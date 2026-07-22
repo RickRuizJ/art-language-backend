@@ -77,10 +77,31 @@ const Submission = sequelize.define('Submission', {
   gradedAt: {
     type: DataTypes.DATE,
     field: 'graded_at'
+  },
+  // SPRINT 0 ADDITION — multiple configurable attempts (see migration
+  // 20260721_sprint0_stabilization.js). 1-indexed per (worksheetId, studentId).
+  attemptNumber: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 1,
+    field: 'attempt_number'
+  },
+  // SPRINT 0 ADDITION — enables the "tiempo promedio" analytics requirement,
+  // which was impossible before (only submittedAt existed, no duration).
+  timeSpentSeconds: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    field: 'time_spent_seconds'
   }
 }, {
   tableName: 'submissions',
-  timestamps: false
+  timestamps: false,
+  indexes: [
+    // Every attempt-limit check and "my submissions for this worksheet" query
+    // filters on this pair — was previously an unindexed lookup.
+    { fields: ['worksheet_id', 'student_id'] },
+    { unique: true, fields: ['worksheet_id', 'student_id', 'attempt_number'] }
+  ]
 });
 
 module.exports = Submission;
