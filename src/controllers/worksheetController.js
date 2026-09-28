@@ -20,8 +20,7 @@
  */
 
 const { Op } = require('sequelize');
-const Worksheet = require('../models/Worksheet');
-const User      = require('../models/User');
+const { Worksheet, User, Workbook, WorkbookWorksheet } = require('../models');
 const logger    = require('../config/logger');
 
 // ─── GET /api/worksheets ──────────────────────────────────────────────────────
@@ -89,11 +88,20 @@ const getWorksheets = async (req, res) => {
 const getWorksheet = async (req, res) => {
   try {
     const worksheet = await Worksheet.findByPk(req.params.id, {
-      include: [{
-        model: User,
-        as: 'creator',
-        attributes: ['id', 'firstName', 'lastName', 'email']
-      }]
+      include: [
+        {
+          model: User,
+          as: 'creator',
+          attributes: ['id', 'firstName', 'lastName', 'email']
+        },
+        {
+          model: Workbook,
+          as: 'workbooks',
+          attributes: ['id', 'title'],
+          through: { attributes: ['displayOrder'] },
+          required: false
+        }
+      ]
     });
 
     if (!worksheet) {
@@ -125,7 +133,7 @@ const createWorksheet = async (req, res) => {
     }
 
     const {
-      title, description, subject, gradeLevel,
+      title, description, instructions, subject, gradeLevel,
       difficulty, estimatedTime, autoGrade, passScore,
       questions, isPublished, maxAttempts
     } = req.body;
@@ -140,6 +148,7 @@ const createWorksheet = async (req, res) => {
     const worksheet = await Worksheet.create({
       title:         title.trim(),
       description:   description?.trim() || null,
+      instructions:  instructions?.trim() || null,
       subject:       subject?.trim() || null,
       gradeLevel:    gradeLevel?.trim() || null,
       difficulty:    difficulty || 'beginner',
@@ -179,7 +188,7 @@ const updateWorksheet = async (req, res) => {
     }
 
     const allowed = [
-      'title', 'description', 'subject', 'gradeLevel',
+      'title', 'description', 'instructions', 'subject', 'gradeLevel',
       'difficulty', 'estimatedTime', 'autoGrade', 'passScore',
       'questions', 'isPublished', 'maxAttempts'
     ];
@@ -188,8 +197,40 @@ const updateWorksheet = async (req, res) => {
     });
     await worksheet.save();
 
+    // The edit screen exposes a single workbook selector. Keep that UI and the
+    // M:N junction table in sync by replacing this worksheet's workbook link.
+    if (req.body.workbookId !== undefined) {
+      let selectedWorkbook = null;
+
+      if (req.body.workbookId) {
+        const workbookWhere = { id: req.body.workbookId };
+        if (req.user.role === 'teacher') workbookWhere.createdBy = req.user.id;
+
+        selectedWorkbook = await Workbook.findOne({ where: workbookWhere });
+        if (!selectedWorkbook) {
+          return res.status(404).json({ success: false, message: 'Workbook not found or access denied.' });
+        }
+      }
+
+      await WorkbookWorksheet.destroy({ where: { worksheetId: worksheet.id } });
+
+      if (selectedWorkbook) {
+        const maxOrder = await WorkbookWorksheet.max('displayOrder', {
+          where: { workbookId: selectedWorkbook.id }
+        });
+        await WorkbookWorksheet.create({
+          workbookId: selectedWorkbook.id,
+          worksheetId: worksheet.id,
+          displayOrder: (maxOrder || 0) + 1
+        });
+      }
+    }
+
     const populated = await Worksheet.findByPk(worksheet.id, {
-      include: [{ model: User, as: 'creator', attributes: ['id', 'firstName', 'lastName'] }]
+      include: [
+        { model: User, as: 'creator', attributes: ['id', 'firstName', 'lastName'] },
+        { model: Workbook, as: 'workbooks', attributes: ['id', 'title'], through: { attributes: [] }, required: false }
+      ]
     });
 
     res.status(200).json({ success: true, data: { worksheet: populated } });

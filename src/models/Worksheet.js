@@ -47,6 +47,10 @@ const Worksheet = sequelize.define('Worksheet', {
     type: DataTypes.TEXT,
     allowNull: true
   },
+  instructions: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
   subject: {
     type: DataTypes.STRING,
     allowNull: true

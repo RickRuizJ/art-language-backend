@@ -30,6 +30,7 @@ const workbookRoutes   = require('./routes/workbooks');
 // FIX: These two were never imported or mounted in the original app.js
 const teacherRoutes    = require('./routes/teacherRoutes');
 const studentRoutes    = require('./routes/studentRoutes');
+const messageRoutes    = require('./routes/messages');
 
 const app = express();
 
@@ -99,6 +100,7 @@ app.use('/api/workbooks',   workbookRoutes);
 // FIX: Mount the teacher and student routes that were missing
 app.use('/api/teachers',    teacherRoutes);
 app.use('/api/students',    studentRoutes);
+app.use('/api/messages',     messageRoutes);
 
 // ─── 404 ──────────────────────────────────────────────────────────────────────
 app.use((req, res) => {

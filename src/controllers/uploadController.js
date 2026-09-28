@@ -117,6 +117,10 @@ exports.uploadWorksheet = [
       const finalWorkbookId = await ensureWorkbook(workbookId, req.user.id);
       logger.info(`[UPLOAD] Assigned to workbook: ${finalWorkbookId}`);
 
+      // Validate upload integration here so the rest of the LMS can stay online
+      // even if Cloudinary environment variables are missing.
+      cloudinary.assertConfigured?.();
+
       // Upload the actual bytes to Cloudinary — Postgres never sees the file.
       const cloudinaryResult = await uploadBufferToCloudinary(req.file.buffer, {
         folder: `art-language/worksheets/${req.user.id}`,
@@ -199,6 +203,13 @@ exports.uploadWorksheet = [
       
       if (error.message && error.message.includes('Workbook not found')) {
         return res.status(404).json({ success: false, message: error.message });
+      }
+
+      if (error.message && error.message.includes('Missing Cloudinary configuration')) {
+        return res.status(503).json({
+          success: false,
+          message: error.message + '. Configure CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET in the backend host.'
+        });
       }
       
       res.status(500).json({ 

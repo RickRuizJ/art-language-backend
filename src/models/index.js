@@ -23,6 +23,7 @@ const { Group, GroupMember }                    = require('./Group');
 const { Workbook, WorkbookWorksheet, FileUpload } = require('./Workbook');
 const Submission                                = require('./Submission');
 const Assignment                                = require('./Assignment');
+const Message                                   = require('./Message');
 
 // ─── Worksheet associations ───────────────────────────────────────────────────
 // Worksheet creator (teacher who created it)
@@ -70,6 +71,15 @@ Worksheet.belongsToMany(Workbook, {
   as: 'workbooks'
 });
 
+
+// ─── Messaging associations ──────────────────────────────────────────────────
+Message.belongsTo(User, { foreignKey: 'senderId', as: 'sender' });
+Message.belongsTo(User, { foreignKey: 'recipientId', as: 'recipient' });
+Message.belongsTo(Group, { foreignKey: 'groupId', as: 'group' });
+User.hasMany(Message, { foreignKey: 'senderId', as: 'sentMessages' });
+User.hasMany(Message, { foreignKey: 'recipientId', as: 'receivedMessages' });
+Group.hasMany(Message, { foreignKey: 'groupId', as: 'messages' });
+
 // ─── Exports ──────────────────────────────────────────────────────────────────
 module.exports = {
   User,
@@ -80,5 +90,6 @@ module.exports = {
   WorkbookWorksheet,
   FileUpload,
   Submission,
-  Assignment
+  Assignment,
+  Message
 };

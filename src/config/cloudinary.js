@@ -20,9 +20,8 @@ function validateConfig() {
   }
 }
 
-// Validate on module load
-if (process.env.NODE_ENV === 'production') {
-  validateConfig();
-}
+// Do not crash the entire LMS at boot if the upload integration is misconfigured.
+// Upload endpoints call this validator and return a clear 503 instead.
+cloudinary.assertConfigured = validateConfig;
 
 module.exports = cloudinary;

@@ -15,10 +15,17 @@ CREATE TABLE IF NOT EXISTS assignments (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Constraint: No permitir duplicados
-ALTER TABLE assignments 
-ADD CONSTRAINT unique_worksheet_group 
-UNIQUE (worksheet_id, group_id);
+-- Constraint: No permitir duplicados (idempotente)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'unique_worksheet_group'
+  ) THEN
+    ALTER TABLE assignments
+      ADD CONSTRAINT unique_worksheet_group
+      UNIQUE (worksheet_id, group_id);
+  END IF;
+END $$;
 
 -- Indexes para performance
 CREATE INDEX IF NOT EXISTS idx_assignments_worksheet ON assignments(worksheet_id);
@@ -34,8 +41,9 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
-CREATE TRIGGER update_assignments_updated_at 
-BEFORE UPDATE ON assignments 
+DROP TRIGGER IF EXISTS update_assignments_updated_at ON assignments;
+CREATE TRIGGER update_assignments_updated_at
+BEFORE UPDATE ON assignments
 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Verificar
