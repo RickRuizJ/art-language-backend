@@ -43,14 +43,24 @@ exports.getAllWorkbooks = async (req, res) => {
       ],
       order: [
         ['displayOrder', 'ASC'],
-        ['created_at', 'DESC'],
-        [{ model: Worksheet, as: 'worksheets' }, WorkbookWorksheet, 'displayOrder', 'ASC']
+        ['created_at', 'DESC']
       ]
+    });
+
+    // Sequelize 6 can generate the wrong SQL alias when ordering a belongsToMany
+    // relation whose through table has a custom alias (worksheetOrder). Sort the
+    // already-loaded worksheets in JS instead of emitting a fragile JOIN alias.
+    const sortedWorkbooks = workbooks.map((workbook) => {
+      const plain = workbook.toJSON();
+      plain.worksheets = (plain.worksheets || []).sort((a, b) =>
+        (a.worksheetOrder?.displayOrder ?? 0) - (b.worksheetOrder?.displayOrder ?? 0)
+      );
+      return plain;
     });
 
     res.json({
       success: true,
-      data: { workbooks, count: workbooks.length }
+      data: { workbooks: sortedWorkbooks, count: sortedWorkbooks.length }
     });
   } catch (error) {
     console.error('Get workbooks error:', error);
@@ -81,9 +91,6 @@ exports.getWorkbookById = async (req, res) => {
             as: 'worksheetOrder'
           }
         }
-      ],
-      order: [
-        [{ model: Worksheet, as: 'worksheets' }, WorkbookWorksheet, 'displayOrder', 'ASC']
       ]
     });
 
@@ -117,6 +124,9 @@ exports.getWorkbookById = async (req, res) => {
     }
 
     const workbookPayload = workbook.toJSON();
+    workbookPayload.worksheets = (workbookPayload.worksheets || []).sort((a, b) =>
+      (a.worksheetOrder?.displayOrder ?? 0) - (b.worksheetOrder?.displayOrder ?? 0)
+    );
     if (req.user.role === 'student') {
       workbookPayload.worksheets = (workbookPayload.worksheets || [])
         .filter(w => w.isPublished)

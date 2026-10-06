@@ -237,6 +237,13 @@ exports.uploadWorksheet = [
           message: error.message + '. Configure CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET in the backend host.'
         });
       }
+
+      if (error.message && /invalid signature/i.test(error.message)) {
+        return res.status(503).json({
+          success: false,
+          message: 'Cloudinary rejected the upload credentials. Re-copy CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET from the same Cloudinary product environment into Render, then redeploy.'
+        });
+      }
       
       res.status(500).json({ 
         success: false, 
