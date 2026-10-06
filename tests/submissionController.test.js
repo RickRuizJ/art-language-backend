@@ -11,6 +11,7 @@ jest.mock('../src/config/logger', () => ({
 const mockWorksheetFindByPk = jest.fn();
 const mockSubmissionCount = jest.fn();
 const mockSubmissionCreate = jest.fn();
+const mockAssignmentFindOne = jest.fn();
 
 jest.mock('../src/models', () => ({
   Submission: {
@@ -19,7 +20,10 @@ jest.mock('../src/models', () => ({
     findAll: jest.fn(),
   },
   Worksheet: { findByPk: (...a) => mockWorksheetFindByPk(...a) },
-  User: {},
+  User: { findByPk: jest.fn().mockResolvedValue({ groupId: null }) },
+  Group: {},
+  GroupMember: { findAll: jest.fn().mockResolvedValue([{ groupId: 'group-1' }]) },
+  Assignment: { findOne: (...a) => mockAssignmentFindOne(...a) },
 }));
 
 jest.mock('../src/services/grading.service', () => ({
@@ -45,6 +49,7 @@ function buildApp() {
 beforeEach(() => {
   jest.clearAllMocks();
   mockSubmissionCreate.mockImplementation(async (data) => ({ ...data, id: 'sub-1' }));
+  mockAssignmentFindOne.mockResolvedValue({ id: 'assignment-1' }); // la hoja está asignada al alumno
 });
 
 describe('POST /submissions — maxAttempts validation', () => {
@@ -144,5 +149,34 @@ describe('POST /submissions — maxAttempts validation', () => {
     const res = await request(app).post('/submissions').send({ worksheetId: 'missing', answers: [] });
 
     expect(res.status).toBe(404);
+  });
+});
+
+describe('POST /submissions — permisos', () => {
+  it('rechaza con 403 si la hoja no está asignada al alumno', async () => {
+    mockWorksheetFindByPk.mockResolvedValue({ id: 'ws-1', maxAttempts: 1, autoGrade: false });
+    mockAssignmentFindOne.mockResolvedValue(null);
+    const res = await request(buildApp()).post('/submissions').send({ worksheetId: 'ws-1', answers: [] });
+    expect(res.status).toBe(403);
+    expect(mockSubmissionCreate).not.toHaveBeenCalled();
+  });
+
+  it('responde 409 ante un doble envío simultáneo', async () => {
+    mockWorksheetFindByPk.mockResolvedValue({ id: 'ws-1', maxAttempts: 0, autoGrade: false });
+    mockSubmissionCount.mockResolvedValue(0);
+    mockSubmissionCreate.mockRejectedValue(Object.assign(new Error('dup'), { name: 'SequelizeUniqueConstraintError' }));
+    const res = await request(buildApp()).post('/submissions').send({ worksheetId: 'ws-1', answers: [] });
+    expect(res.status).toBe(409);
+  });
+
+  it('deja en manos del profesor la entrega con preguntas que requieren revisión', async () => {
+    mockWorksheetFindByPk.mockResolvedValue({ id: 'ws-1', maxAttempts: 1, autoGrade: true });
+    mockSubmissionCount.mockResolvedValue(0);
+    gradingService.gradeSubmission.mockResolvedValue({
+      score: 0, maxScore: 10, percentage: 0,
+      feedback: [{ questionId: 'q1', correct: null, pointsEarned: 0, requiresManualReview: true }],
+    });
+    await request(buildApp()).post('/submissions').send({ worksheetId: 'ws-1', answers: [{ questionId: 'q1', answer: 'x' }] });
+    expect(mockSubmissionCreate).toHaveBeenCalledWith(expect.objectContaining({ status: 'submitted' }));
   });
 });

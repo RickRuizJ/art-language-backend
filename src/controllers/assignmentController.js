@@ -12,6 +12,26 @@
  */
 
 const sequelize = require('../config/database');
+
+// Quita las claves de respuestas de las preguntas antes de enviarlas a un alumno.
+function stripAnswerKeys(json, role) {
+  if (role !== 'student' || !json?.worksheet || !Array.isArray(json.worksheet.questions)) return json;
+  json.worksheet.questions = json.worksheet.questions.map(q => {
+    if (!q || ['external_link', 'google_embed'].includes(q.type)) return q;
+    // Never expose grading keys to students.
+    // For matching questions we must preserve the LEFT prompts and provide a
+    // shuffled list of right-side options; the player expects `pairs` +
+    // `matchingOptions`. Removing `pairs` made matching questions render blank.
+    const { correctAnswer, correctAnswers, correctOrder, sampleAnswer, explanation, pairs, ...safe } = q;
+    if (q.type === 'matching' && Array.isArray(pairs)) {
+      const rights = pairs.map(p => p?.right).filter(Boolean);
+      safe.pairs = pairs.map(p => ({ left: p?.left ?? '' }));
+      safe.matchingOptions = rights.sort(() => Math.random() - 0.5);
+    }
+    return safe;
+  });
+  return json;
+}
 const { Assignment, Worksheet, Group, GroupMember, Submission, User } = require('../models');
 
 /**
@@ -34,18 +54,37 @@ const assignWorksheet = async (req, res) => {
     if (!worksheet) return res.status(404).json({ success: false, message: 'Worksheet not found.' });
     if (!group)     return res.status(404).json({ success: false, message: 'Group not found.' });
 
+    if (req.user.role === 'teacher' && worksheet.createdBy !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'You can only assign your own worksheets.' });
+    }
     if (req.user.role === 'teacher' && group.teacherId !== req.user.id) {
       return res.status(403).json({ success: false, message: 'You are not the teacher of this group.' });
     }
 
-    const assignment = await Assignment.create({
-      worksheetId,
-      groupId,
-      assignedBy:   req.user.id,
-      dueDate:      dueDate ? new Date(dueDate) : null,
-      instructions: instructions || null,
-      isActive:     true
-    });
+    // An assigned resource must be readable by students. Publishing here keeps
+    // draft creation separate while preventing assigned-but-404 worksheets.
+    if (!worksheet.isPublished) await worksheet.update({ isPublished: true });
+
+    // Re-assigning the same worksheet to the same group should reactivate/update
+    // the existing row instead of violating the unique worksheet/group key.
+    let assignment = await Assignment.findOne({ where: { worksheetId, groupId } });
+    if (assignment) {
+      await assignment.update({
+        assignedBy: req.user.id,
+        dueDate: dueDate ? new Date(dueDate) : null,
+        instructions: instructions || null,
+        isActive: true
+      });
+    } else {
+      assignment = await Assignment.create({
+        worksheetId,
+        groupId,
+        assignedBy: req.user.id,
+        dueDate: dueDate ? new Date(dueDate) : null,
+        instructions: instructions || null,
+        isActive: true
+      });
+    }
 
     const populated = await Assignment.findByPk(assignment.id, {
       include: [
@@ -103,7 +142,7 @@ const getGroupAssignments = async (req, res) => {
       submissions.forEach(s => { subMap[s.worksheetId] = s; });
 
       result = assignments.map(a => ({
-        ...a.toJSON(),
+        ...stripAnswerKeys(a.toJSON(), req.user.role),
         submission:       subMap[a.worksheetId] || null,
         submissionStatus: subMap[a.worksheetId]?.status || 'pending'
       }));
@@ -147,7 +186,7 @@ const getStudentAssignments = async (req, res) => {
     submissions.forEach(s => { subMap[s.worksheetId] = s; });
 
     const enriched = assignments.map(a => ({
-      ...a.toJSON(),
+      ...stripAnswerKeys(a.toJSON(), req.user.role),
       submission:       subMap[a.worksheetId] || null,
       submissionStatus: subMap[a.worksheetId]?.status || 'pending'
     }));

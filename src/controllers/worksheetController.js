@@ -20,8 +20,57 @@
  */
 
 const { Op } = require('sequelize');
-const { Worksheet, User, Workbook, WorkbookWorksheet } = require('../models');
+const { randomUUID } = require('crypto');
+const { Worksheet, User, Workbook, WorkbookWorksheet, Assignment, GroupMember } = require('../models');
 const logger    = require('../config/logger');
+
+
+function normalizeQuestions(questions = []) {
+  return questions.map((q) => ({
+    ...q,
+    id: q.id || q._id || randomUUID(),
+    text: q.text || q.question || '',
+    points: Number.isFinite(Number(q.points)) ? Number(q.points) : 10,
+  }));
+}
+
+function sanitizeQuestionsForStudent(questions = []) {
+  return questions.map((q) => {
+    const clean = { ...q };
+    delete clean.correctAnswer;
+    delete clean.correctAnswers;
+    delete clean.sampleAnswer;
+    delete clean.explanation;
+
+    if (clean.type === 'matching' && Array.isArray(clean.pairs)) {
+      const rights = clean.pairs.map(p => p.right).filter(Boolean);
+      clean.pairs = clean.pairs.map(p => ({ left: p.left }));
+      clean.matchingOptions = rights.sort(() => Math.random() - 0.5);
+    }
+    return clean;
+  });
+}
+
+async function studentCanAccessWorksheet(studentId, worksheetId) {
+  const [memberships, student] = await Promise.all([
+    GroupMember.findAll({ where: { studentId }, attributes: ['groupId'] }),
+    User.findByPk(studentId, { attributes: ['groupId'] })
+  ]);
+  const groupIds = [...new Set([
+    ...memberships.map(m => m.groupId),
+    student?.groupId
+  ].filter(Boolean))];
+  if (!groupIds.length) return false;
+  const assignment = await Assignment.findOne({
+    where: {
+      worksheetId,
+      groupId: { [Op.in]: groupIds },
+      isActive: { [Op.ne]: false }
+    },
+    attributes: ['id']
+  });
+  return !!assignment;
+}
 
 // ─── GET /api/worksheets ──────────────────────────────────────────────────────
 const getWorksheets = async (req, res) => {
@@ -38,6 +87,20 @@ const getWorksheets = async (req, res) => {
       where.createdBy = req.user.id;
     } else if (req.user.role === 'student') {
       where.isPublished = true;
+      const [memberships, student] = await Promise.all([
+        GroupMember.findAll({ where: { studentId: req.user.id }, attributes: ['groupId'] }),
+        User.findByPk(req.user.id, { attributes: ['groupId'] })
+      ]);
+      const groupIds = [...new Set([...memberships.map(m => m.groupId), student?.groupId].filter(Boolean))];
+      if (!groupIds.length) {
+        where.id = { [Op.in]: [] };
+      } else {
+        const assigned = await Assignment.findAll({
+          where: { groupId: { [Op.in]: groupIds }, isActive: { [Op.ne]: false } },
+          attributes: ['worksheetId']
+        });
+        where.id = { [Op.in]: [...new Set(assigned.map(a => a.worksheetId))] };
+      }
     }
     // admin sees everything
 
@@ -56,7 +119,7 @@ const getWorksheets = async (req, res) => {
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    const { rows: worksheets, count: total } = await Worksheet.findAndCountAll({
+    const queryOptions = {
       where,
       include: [{
         model: User,
@@ -67,7 +130,9 @@ const getWorksheets = async (req, res) => {
       order: [['created_at', 'DESC']],
       offset,
       limit: parseInt(limit)
-    });
+    };
+    if (req.user.role === 'student') queryOptions.attributes = { exclude: ['questions'] };
+    const { rows: worksheets, count: total } = await Worksheet.findAndCountAll(queryOptions);
 
     res.status(200).json({
       success: true,
@@ -108,9 +173,16 @@ const getWorksheet = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Worksheet not found.' });
     }
 
-    // Students can only see published worksheets
-    if (req.user.role === 'student' && !worksheet.isPublished) {
-      return res.status(404).json({ success: false, message: 'Worksheet not found.' });
+    // Students may only open worksheets explicitly assigned to one of their groups.
+    if (req.user.role === 'student') {
+      const allowed = worksheet.isPublished && await studentCanAccessWorksheet(req.user.id, worksheet.id);
+      if (!allowed) {
+        return res.status(404).json({ success: false, message: 'Worksheet not found.' });
+      }
+      const payload = worksheet.toJSON();
+      payload.questions = sanitizeQuestionsForStudent(payload.questions || []);
+      if (payload.creator) delete payload.creator.email;
+      return res.status(200).json({ success: true, data: { worksheet: payload } });
     }
 
     // Teachers can only see their own worksheets
@@ -155,7 +227,7 @@ const createWorksheet = async (req, res) => {
       estimatedTime: estimatedTime || 30,
       autoGrade:     autoGrade !== false,
       passScore:     passScore || 70,
-      questions,
+      questions: normalizeQuestions(questions),
       createdBy:     req.user.id,
       isPublished:   isPublished !== false,
       maxAttempts:   maxAttempts !== undefined ? maxAttempts : 1
@@ -193,7 +265,9 @@ const updateWorksheet = async (req, res) => {
       'questions', 'isPublished', 'maxAttempts'
     ];
     allowed.forEach(f => {
-      if (req.body[f] !== undefined) worksheet[f] = req.body[f];
+      if (req.body[f] !== undefined) {
+        worksheet[f] = f === 'questions' ? normalizeQuestions(req.body[f]) : req.body[f];
+      }
     });
     await worksheet.save();
 

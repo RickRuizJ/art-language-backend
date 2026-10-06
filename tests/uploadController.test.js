@@ -141,22 +141,25 @@ describe('POST /upload (uploadWorksheet)', () => {
     expect(res.status).toBe(404);
   });
 
-  it('creates a default workbook when none is provided', async () => {
-    mockWorkbookFindOne.mockResolvedValueOnce(null); // no existing "Mis Worksheets" workbook
-    mockWorkbookCreate.mockResolvedValueOnce({ id: 'default-workbook' });
+  it('sube sin workbook cuando no se elige ninguno (el workbook es opcional)', async () => {
     const app = buildApp();
 
     const res = await request(app)
       .post('/upload')
       .field('title', 'No Workbook Given')
-      .attach('file', Buffer.from('%PDF-1.4 fake'), {
-        filename: 'worksheet.pdf',
-        contentType: 'application/pdf',
-      });
+      .attach('file', Buffer.from('%PDF-1.4 fake'), { filename: 'worksheet.pdf', contentType: 'application/pdf' });
 
     expect(res.status).toBe(201);
-    expect(mockWorkbookCreate).toHaveBeenCalled();
-    expect(res.body.data.worksheet.workbookId).toBe('default-workbook');
+    expect(mockWorkbookCreate).not.toHaveBeenCalled();
+    expect(mockWorkbookWorksheetCreate).not.toHaveBeenCalled();
+  });
+
+  it('acepta un .docx aunque el navegador lo envíe como octet-stream', async () => {
+    const res = await request(buildApp())
+      .post('/upload')
+      .field('title', 'Word')
+      .attach('file', Buffer.from('PK'), { filename: 't.docx', contentType: 'application/octet-stream' });
+    expect(res.status).toBe(201);
   });
 
   it('rejects unsupported file types before ever calling Cloudinary', async () => {
@@ -175,7 +178,7 @@ describe('POST /upload (uploadWorksheet)', () => {
     // when err.status is unset) rather than a 400 — that status-code mapping
     // is pre-existing behavior untouched by Sprint 0 and outside this PR's
     // scope, but is left documented here as a candidate for a future PR.
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(400); // errorHandler traduce el rechazo de tipo a 400
     expect(res.body.success).toBe(false);
     expect(mockUploadStream).not.toHaveBeenCalled();
   });

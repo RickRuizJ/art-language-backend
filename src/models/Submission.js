@@ -55,7 +55,7 @@ const Submission = sequelize.define('Submission', {
     field: 'max_score'
   },
   status: {
-    type: DataTypes.ENUM('pending', 'graded', 'reviewed'),
+    type: DataTypes.ENUM('pending', 'submitted', 'graded', 'reviewed'),
     defaultValue: 'pending'
   },
   feedback: {

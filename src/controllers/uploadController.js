@@ -1,7 +1,9 @@
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const cloudinary = require('../config/cloudinary');
-const { Worksheet, Workbook, WorkbookWorksheet, FileUpload } = require('../models');
+const { Op } = require('sequelize');
+const { buildLinkResource, LinkError } = require('../utils/links');
+const { Worksheet, Workbook, WorkbookWorksheet, FileUpload, Assignment, GroupMember, User } = require('../models');
 const logger = require('../config/logger');
 
 // ─── Multer — memory storage (no disk writes; Render has no persistent FS) ──
@@ -9,19 +11,46 @@ const ALLOWED_MIMES = {
   'application/pdf': '.pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
   'application/msword': '.doc',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+  'application/vnd.ms-excel': '.xls',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+  'application/vnd.ms-powerpoint': '.ppt',
+  'text/plain': '.txt',
+  'text/csv': '.csv',
+  'audio/mpeg': '.mp3',
+  'audio/mp4': '.m4a',
+  'video/mp4': '.mp4',
   'image/png': '.png',
   'image/jpeg': '.jpg',
   'image/gif': '.gif',
   'image/webp': '.webp',
 };
 
+const EXT_TO_MIME = Object.entries(ALLOWED_MIMES).reduce((acc, [mime, ext]) => { acc[ext] = mime; return acc; }, { '.jpeg': 'image/jpeg' });
+
+// Windows/Safari a veces envían .docx como application/octet-stream: si el tipo
+// es desconocido se decide por la extensión; cualquier otra combinación se rechaza.
+function resolveMime(file) {
+  const ext = require('path').extname(file.originalname || '').toLowerCase();
+  const byExt = EXT_TO_MIME[ext] || null;
+
+  // Windows/Safari may send CSV as application/vnd.ms-excel. Prefer the
+  // explicit .csv extension so Cloudinary/file metadata remain CSV rather
+  // than silently renaming it to .xls.
+  if (ext === '.csv' && file.mimetype === 'application/vnd.ms-excel') return 'text/csv';
+
+  if (ALLOWED_MIMES[file.mimetype]) return file.mimetype;
+  if (!file.mimetype || file.mimetype === 'application/octet-stream') return byExt;
+  return null;
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
-    if (ALLOWED_MIMES[file.mimetype]) {
+    if (resolveMime(file)) {
       cb(null, true);
     } else {
-      cb(new Error('File type not supported. Allowed: PDF, DOCX, DOC, PNG, JPG, GIF, WEBP'), false);
+      cb(new Error('File type not supported. Allowed: PDF, Word, Excel, PowerPoint, TXT, CSV, MP3, MP4, PNG, JPG, GIF, WEBP'), false);
     }
   },
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
@@ -38,11 +67,14 @@ const upload = multer({
 // PDFs (as 'raw'/'image') and image types correctly without us branching.
 function uploadBufferToCloudinary(buffer, { folder, filename, mimetype }) {
   return new Promise((resolve, reject) => {
-    const resourceType = mimetype === 'application/pdf' ? 'raw' : 'auto';
+    const isImage = mimetype.startsWith('image/');
+    const resourceType = isImage ? 'image' : 'raw';
     const stream = cloudinary.uploader.upload_stream(
       {
         folder,
-        public_id: filename.replace(/\.[^/.]+$/, ''),
+        // Raw resources (PDF/DOC/DOCX) should keep their extension so the
+        // delivery URL preserves the correct file type/content disposition.
+        public_id: resourceType === 'raw' ? filename : filename.replace(/\.[^/.]+$/, ''),
         resource_type: resourceType,
         overwrite: false,
       },
@@ -52,38 +84,39 @@ function uploadBufferToCloudinary(buffer, { folder, filename, mimetype }) {
   });
 }
 
-// ─── CRITICAL FIX: Ensure workbook exists or create default ──────────────────
-async function ensureWorkbook(workbookId, userId) {
-  if (workbookId) {
-    // Verify workbook exists and user has access
-    const workbook = await Workbook.findOne({
-      where: { id: workbookId, createdBy: userId }
-    });
-    if (!workbook) {
-      throw new Error('Workbook not found or access denied');
-    }
-    return workbookId;
-  }
+// ─── Optional workbook link ──────────────────────────────────────────────────
+async function resolveWorkbook(workbookId, userId) {
+  if (!workbookId) return null;
+  const workbook = await Workbook.findOne({ where: { id: workbookId, createdBy: userId } });
+  if (!workbook) throw new Error('Workbook not found or access denied');
+  return workbook.id;
+}
 
-  // CRITICAL: Create or get default workbook (worksheets MUST belong to a workbook)
-  let defaultWorkbook = await Workbook.findOne({
-    where: { 
-      createdBy: userId,
-      title: 'Mis Worksheets'
-    }
+async function linkToWorkbook(workbookId, worksheetId) {
+  if (!workbookId) return;
+  const maxOrder = await WorkbookWorksheet.max('displayOrder', { where: { workbookId } });
+  await WorkbookWorksheet.create({
+    workbookId,
+    worksheetId,
+    displayOrder: (maxOrder || 0) + 1,
   });
+}
 
-  if (!defaultWorkbook) {
-    defaultWorkbook = await Workbook.create({
-      title: 'Mis Worksheets',
-      description: 'Worksheets sin organizar',
-      createdBy: userId,
-      status: 'draft',
-      isActive: true
-    });
-  }
-
-  return defaultWorkbook.id;
+async function studentCanAccessFile(studentId, worksheetId) {
+  const [memberships, student] = await Promise.all([
+    GroupMember.findAll({ where: { studentId }, attributes: ['groupId'] }),
+    User.findByPk(studentId, { attributes: ['groupId'] })
+  ]);
+  const groupIds = [...new Set([...memberships.map(m => m.groupId), student?.groupId].filter(Boolean))];
+  if (!groupIds.length) return false;
+  return !!(await Assignment.findOne({
+    where: {
+      worksheetId,
+      groupId: { [Op.in]: groupIds },
+      isActive: { [Op.ne]: false }
+    },
+    attributes: ['id']
+  }));
 }
 
 // ─── POST /api/worksheets/upload ──────────────────────────────────────────────
@@ -108,14 +141,16 @@ exports.uploadWorksheet = [
       // base64 5MB cap needed since we no longer store the file in Postgres.
 
       const fileId   = uuidv4();
-      const ext      = ALLOWED_MIMES[req.file.mimetype] || '';
+      const mimeType = resolveMime(req.file);
+      const originalExt = require('path').extname(req.file.originalname || '').toLowerCase();
+      const ext = EXT_TO_MIME[originalExt] ? originalExt : (ALLOWED_MIMES[mimeType] || '');
       const filename = `${fileId}${ext}`;
 
       logger.info(`[UPLOAD] User ${req.user.id} uploading file: ${req.file.originalname} (${req.file.size} bytes)`);
 
       // CRITICAL FIX: Ensure workbook exists
-      const finalWorkbookId = await ensureWorkbook(workbookId, req.user.id);
-      logger.info(`[UPLOAD] Assigned to workbook: ${finalWorkbookId}`);
+      const finalWorkbookId = await resolveWorkbook(workbookId, req.user.id);
+      if (finalWorkbookId) logger.info(`[UPLOAD] Assigned to workbook: ${finalWorkbookId}`);
 
       // Validate upload integration here so the rest of the LMS can stay online
       // even if Cloudinary environment variables are missing.
@@ -125,7 +160,7 @@ exports.uploadWorksheet = [
       const cloudinaryResult = await uploadBufferToCloudinary(req.file.buffer, {
         folder: `art-language/worksheets/${req.user.id}`,
         filename,
-        mimetype: req.file.mimetype,
+        mimetype: mimeType,
       });
       logger.info(`[UPLOAD] Cloudinary stored: ${cloudinaryResult.secure_url}`);
 
@@ -137,7 +172,7 @@ exports.uploadWorksheet = [
         originalFilename: req.file.originalname,
         filePath: cloudinaryResult.secure_url,
         fileSize: req.file.size,
-        mimeType: req.file.mimetype,
+        mimeType,
         uploadedBy: req.user.id,
         entityType: 'worksheet',
         isPublic: false,
@@ -161,18 +196,9 @@ exports.uploadWorksheet = [
       // 3) Link file → worksheet
       await fileRecord.update({ entityId: worksheet.id });
 
-      // 4) CRITICAL FIX: ALWAYS link to workbook
-      const maxOrder = await WorkbookWorksheet.max('displayOrder', { 
-        where: { workbookId: finalWorkbookId } 
-      });
-      
-      await WorkbookWorksheet.create({
-        workbookId: finalWorkbookId,
-        worksheetId: worksheet.id,
-        displayOrder: (maxOrder || 0) + 1,
-      });
-
-      logger.info(`[UPLOAD] Linked worksheet ${worksheet.id} to workbook ${finalWorkbookId}`);
+      // 4) Link to a workbook only when the teacher selected one.
+      await linkToWorkbook(finalWorkbookId, worksheet.id);
+      if (finalWorkbookId) logger.info(`[UPLOAD] Linked worksheet ${worksheet.id} to workbook ${finalWorkbookId}`);
 
       res.status(201).json({
         success: true,
@@ -220,101 +246,53 @@ exports.uploadWorksheet = [
   },
 ];
 
-// ─── POST /api/worksheets/google-link ─────────────────────────────────────────
-// FIXED: Ensure workbook link, better validation
-exports.saveGoogleLink = async (req, res) => {
+// ─── POST /api/worksheets/external-link ───────────────────────────────────────
+// Stores any http(s) learning resource. Google Docs/Sheets/Slides receive an
+// embed URL; other links are presented as a safe "Open resource" link because
+// many websites intentionally block iframe embedding.
+exports.saveExternalLink = async (req, res) => {
   try {
     const { title, url, description, subject, gradeLevel, workbookId } = req.body;
+    if (!title || !title.trim()) return res.status(400).json({ success: false, message: 'Title is required.' });
+    if (!url || !url.trim()) return res.status(400).json({ success: false, message: 'Link is required.' });
 
-    if (!title || !title.trim()) {
-      return res.status(400).json({ success: false, message: 'Title is required.' });
+    // Acepta cualquier http(s) (también sin "https://"), detecta Google, YouTube y Vimeo.
+    let built;
+    try { built = buildLinkResource(url); } catch (err) {
+      if (err instanceof LinkError) return res.status(400).json({ success: false, message: err.message });
+      throw err;
     }
-    if (!url || !url.trim()) {
-      return res.status(400).json({ success: false, message: 'Google link is required.' });
-    }
+    const parsed = new URL(built.originalUrl);
+    const finalWorkbookId = await resolveWorkbook(workbookId, req.user.id);
+    const resource = { ...built, host: parsed.hostname };
 
-    const googlePattern = /^https:\/\/(docs\.google\.com|sheets\.google\.com|slides\.google\.com)\//i;
-    if (!googlePattern.test(url.trim())) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid Google link. Please use a valid Google Docs, Sheets, or Slides URL.',
-      });
-    }
-
-    logger.info(`[GOOGLE LINK] User ${req.user.id} saving link: ${url.substring(0, 50)}...`);
-
-    // CRITICAL FIX: Ensure workbook exists
-    const finalWorkbookId = await ensureWorkbook(workbookId, req.user.id);
-    logger.info(`[GOOGLE LINK] Assigned to workbook: ${finalWorkbookId}`);
-
-    // Detect type
-    let googleType = 'doc';
-    if (url.includes('sheets.google.com'))  googleType = 'sheet';
-    if (url.includes('slides.google.com'))  googleType = 'slide';
-
-    // Build embed URL (strip /edit, append the right pub param)
-    let embedUrl = url.trim().replace(/\/edit.*$/, '').replace(/\/$/, '');
-    if (!embedUrl.includes('/pub') && !embedUrl.includes('/embed')) {
-      if (googleType === 'doc')   embedUrl += '/pub?embedded=true';
-      if (googleType === 'sheet') embedUrl += '/pub?output=html';
-      if (googleType === 'slide') embedUrl += '/embed';
-    }
-
-    const typeLabel = { doc: 'Doc', sheet: 'Sheet', slide: 'Slide' };
-
-    // Create worksheet — questions field carries the Google metadata
     const worksheet = await Worksheet.create({
       title: title.trim(),
-      description: description ? description.trim() : `Google ${typeLabel[googleType]}`,
+      description: description?.trim() || `External resource · ${parsed.hostname}`,
       subject: subject || null,
       gradeLevel: gradeLevel || null,
       createdBy: req.user.id,
       isPublished: false,
-      questions: [{
-        type: 'google_embed',
-        googleType,
-        originalUrl: url.trim(),
-        embedUrl,
-      }],
+      questions: [resource],
       autoGrade: false,
       difficulty: 'beginner',
     });
 
-    logger.info(`[GOOGLE LINK] Created worksheet: ${worksheet.id}`);
-
-    // CRITICAL FIX: ALWAYS add to workbook
-    const maxOrder = await WorkbookWorksheet.max('displayOrder', { 
-      where: { workbookId: finalWorkbookId } 
-    });
-    
-    await WorkbookWorksheet.create({
-      workbookId: finalWorkbookId,
-      worksheetId: worksheet.id,
-      displayOrder: (maxOrder || 0) + 1,
-    });
-
-    logger.info(`[GOOGLE LINK] Linked worksheet ${worksheet.id} to workbook ${finalWorkbookId}`);
-
-    res.status(201).json({
+    await linkToWorkbook(finalWorkbookId, worksheet.id);
+    return res.status(201).json({
       success: true,
-      message: 'Google link saved successfully',
-      data: {
-        worksheet: worksheet.toJSON(),
-        googleType,
-        embedUrl,
-        workbookId: finalWorkbookId,
-      },
+      message: 'Link saved successfully',
+      data: { worksheet: worksheet.toJSON(), workbookId: finalWorkbookId }
     });
   } catch (error) {
-    logger.error('[GOOGLE LINK ERROR]', error);
-    
-    if (error.message && error.message.includes('Workbook not found')) {
-      return res.status(404).json({ success: false, message: error.message });
-    }
-    
-    res.status(500).json({ success: false, message: 'Failed to save Google link' });
+    logger.error('[EXTERNAL LINK ERROR]', error);
+    if (error.message?.includes('Workbook not found')) return res.status(404).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: 'Failed to save link' });
   }
 };
+
+// Backward-compatible alias for old clients.
+exports.saveGoogleLink = exports.saveExternalLink;
 
 // ─── GET /api/worksheets/:id/file ─────────────────────────────────────────────
 // Returns the Cloudinary URL for an uploaded file so the frontend can render it.
@@ -339,6 +317,16 @@ exports.getWorksheetFile = async (req, res) => {
 
     if (!fileRecord) {
       return res.status(404).json({ success: false, message: 'File not found' });
+    }
+
+    const worksheet = await Worksheet.findByPk(req.params.id, { attributes: ['id', 'createdBy', 'isPublished'] });
+    if (!worksheet) return res.status(404).json({ success: false, message: 'Worksheet not found' });
+    if (req.user.role === 'teacher' && worksheet.createdBy !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+    if (req.user.role === 'student') {
+      const allowed = worksheet.isPublished && await studentCanAccessFile(req.user.id, worksheet.id);
+      if (!allowed) return res.status(404).json({ success: false, message: 'File not found' });
     }
 
     res.json({

@@ -135,7 +135,10 @@ const getStudentProfile = async (req, res) => {
     });
 
     const subMap = {};
-    submissions.forEach(s => { subMap[s.worksheetId] = s; });
+    submissions.forEach(s => {
+      const current = subMap[s.worksheetId];
+      if (!current || new Date(s.submittedAt) > new Date(current.submittedAt)) subMap[s.worksheetId] = s;
+    });
 
     const assignmentsWithStatus = assignments.map(a => ({
       ...a.toJSON(),
@@ -143,17 +146,16 @@ const getStudentProfile = async (req, res) => {
       submissionStatus: subMap[a.worksheetId]?.status || 'pending'
     }));
 
-    // 5. Compute progress stats
-    const completed = submissions.filter(s =>
-      ['submitted', 'graded', 'reviewed'].includes(s.status)
-    );
-    const graded = submissions.filter(s => s.status === 'graded' && s.score !== null);
+    // 5. Compute progress by assignment, not by raw attempt count. Multiple
+    // attempts for one worksheet must never make pendingAssignments negative.
+    const assignedWorksheetIds = new Set(assignments.map(a => a.worksheetId));
+    const latestAssignedSubs = Object.values(subMap).filter(s => assignedWorksheetIds.has(s.worksheetId));
+    const completed = latestAssignedSubs.filter(s => ['submitted', 'graded', 'reviewed'].includes(s.status));
+    const graded = latestAssignedSubs.filter(s => ['graded', 'reviewed'].includes(s.status) && s.score !== null);
 
     let avgScore = null;
     if (graded.length > 0) {
-      const sum = graded.reduce((acc, s) =>
-        acc + (s.maxScore > 0 ? (s.score / s.maxScore) * 100 : 0), 0
-      );
+      const sum = graded.reduce((acc, s) => acc + (s.maxScore > 0 ? (s.score / s.maxScore) * 100 : 0), 0);
       avgScore = Math.round(sum / graded.length);
     }
 
@@ -166,7 +168,7 @@ const getStudentProfile = async (req, res) => {
       progress: {
         totalAssignments:     assignments.length,
         completedAssignments: completed.length,
-        pendingAssignments:   assignments.length - completed.length,
+        pendingAssignments:   Math.max(0, assignments.length - completed.length),
         completionRate: assignments.length > 0
           ? Math.round((completed.length / assignments.length) * 100)
           : 0,
@@ -182,3 +184,47 @@ const getStudentProfile = async (req, res) => {
 };
 
 module.exports = { getMyStudents, getStudentProfile };
+
+
+/** GET /api/teachers/dashboard-stats */
+const getDashboardStats = async (req, res) => {
+  try {
+    const groups = await Group.findAll({
+      where: req.user.role === 'admin' ? {} : { teacherId: req.user.id },
+      attributes: ['id'],
+      include: [{ model: GroupMember, as: 'members', attributes: ['studentId'] }]
+    });
+    const studentIds = new Set();
+    groups.forEach(g => g.members?.forEach(m => studentIds.add(m.studentId)));
+
+    const worksheetWhere = req.user.role === 'admin' ? {} : { createdBy: req.user.id };
+    const worksheets = await Worksheet.findAll({ where: worksheetWhere, attributes: ['id'] });
+    const worksheetIds = worksheets.map(w => w.id);
+    // Entregas que esperan al profesor ('submitted' o 'pending'), contando sólo el
+    // intento vigente de cada alumno: uno antiguo reemplazado ya no necesita revisión.
+    let pendingSubmissions = 0;
+    if (worksheetIds.length) {
+      const [rows] = await require('../config/database').query(
+        `SELECT COUNT(*)::int AS count FROM submissions s
+          WHERE s.status IN ('pending','submitted') AND s.worksheet_id IN (:ids)
+            AND NOT EXISTS (SELECT 1 FROM submissions n
+                             WHERE n.worksheet_id = s.worksheet_id AND n.student_id = s.student_id
+                               AND n.attempt_number > s.attempt_number)`,
+        { replacements: { ids: worksheetIds } }
+      );
+      pendingSubmissions = rows[0]?.count || 0;
+    }
+
+    return res.json({ success: true, data: {
+      totalWorksheets: worksheets.length,
+      totalGroups: groups.length,
+      totalStudents: studentIds.size,
+      pendingSubmissions
+    }});
+  } catch (err) {
+    console.error('getDashboardStats error:', err);
+    return res.status(500).json({ success: false, message: 'Could not load dashboard stats.' });
+  }
+};
+
+module.exports.getDashboardStats = getDashboardStats;

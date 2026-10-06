@@ -123,7 +123,10 @@ const getStudentDashboard = async (req, res) => {
       });
 
       const subMap = {};
-      submissions.forEach(s => { subMap[s.worksheetId] = s; });
+      submissions.forEach(s => {
+        const current = subMap[s.worksheetId];
+        if (!current || new Date(s.submittedAt) > new Date(current.submittedAt)) subMap[s.worksheetId] = s;
+      });
 
       assignments = rawAssignments.map(a => {
         const sub = subMap[a.worksheetId] || null;
@@ -135,21 +138,17 @@ const getStudentDashboard = async (req, res) => {
       });
 
       // 5. Stats
-      const completed = submissions.filter(s =>
-        ['submitted', 'graded', 'reviewed'].includes(s.status)
-      );
-      const graded = submissions.filter(s =>
-        s.status === 'graded' && s.score !== null
-      );
+      const assignedWorksheetIds = new Set(assignments.map(a => a.worksheetId));
+      const latestAssignedSubs = Object.values(subMap).filter(s => assignedWorksheetIds.has(s.worksheetId));
+      const completed = latestAssignedSubs.filter(s => ['submitted', 'graded', 'reviewed'].includes(s.status));
+      const graded = latestAssignedSubs.filter(s => ['graded', 'reviewed'].includes(s.status) && s.score !== null);
 
       stats.total     = assignments.length;
       stats.completed = completed.length;
-      stats.pending   = stats.total - stats.completed;
+      stats.pending   = Math.max(0, stats.total - stats.completed);
 
       if (graded.length > 0) {
-        const sum = graded.reduce((acc, s) =>
-          acc + (s.maxScore > 0 ? (s.score / s.maxScore) * 100 : 0), 0
-        );
+        const sum = graded.reduce((acc, s) => acc + (s.maxScore > 0 ? (s.score / s.maxScore) * 100 : 0), 0);
         stats.avgScore = Math.round(sum / graded.length);
       }
     }

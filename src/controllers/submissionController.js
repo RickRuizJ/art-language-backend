@@ -1,4 +1,5 @@
-const { Submission, Worksheet, User } = require('../models');
+const { Op } = require('sequelize');
+const { Submission, Worksheet, User, Assignment, Group, GroupMember } = require('../models');
 const gradingService = require('../services/grading.service');
 const logger = require('../config/logger');
 
@@ -39,6 +40,22 @@ exports.submitWorksheet = async (req, res) => {
       });
     }
 
+    // A student may submit only a worksheet assigned to one of their groups.
+    const [memberships, studentRecord] = await Promise.all([
+      GroupMember.findAll({ where: { studentId: req.user.id }, attributes: ['groupId'] }),
+      User.findByPk(req.user.id, { attributes: ['groupId'] })
+    ]);
+    const groupIds = [...new Set([...memberships.map(m => m.groupId), studentRecord?.groupId].filter(Boolean))];
+    const assignment = groupIds.length ? await Assignment.findOne({
+      where: { worksheetId, groupId: { [Op.in]: groupIds }, isActive: { [Op.ne]: false } },
+      attributes: ['id']
+    }) : null;
+    if (!assignment) return res.status(403).json({ success: false, message: 'This worksheet is not assigned to you.' });
+
+    if (answers !== undefined && !Array.isArray(answers)) {
+      return res.status(400).json({ success: false, message: 'answers must be an array.' });
+    }
+
     // How many attempts has this student already made on this worksheet?
     const previousAttempts = await Submission.count({
       where: { worksheetId, studentId: req.user.id }
@@ -54,12 +71,13 @@ exports.submitWorksheet = async (req, res) => {
 
     // Auto-grade if enabled — always via the unified gradingService.
     let gradingResult;
-    let status = 'pending';
+    let status = worksheet.autoGrade ? 'pending' : 'submitted';
 
     if (worksheet.autoGrade) {
       const answersMap = answersArrayToMap(answers);
       gradingResult = await gradingService.gradeSubmission(worksheet, answersMap);
-      status = 'graded';
+      // Si alguna pregunta necesita revisión manual, la entrega queda en manos del profesor.
+      status = gradingResult.feedback.some(f => f.requiresManualReview) ? 'submitted' : 'graded';
     }
 
     // Reshape gradingService's feedback[] back into the answers[] format the
@@ -101,6 +119,9 @@ exports.submitWorksheet = async (req, res) => {
       }
     });
   } catch (error) {
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      return res.status(409).json({ success: false, message: 'Esta entrega ya se había enviado. Actualiza la página.' });
+    }
     logger.error('Submit worksheet error:', error);
     res.status(500).json({ 
       success: false, 
@@ -118,10 +139,15 @@ exports.getStudentSubmissions = async (req, res) => {
 
     // Check permissions
     if (req.user.role === 'student' && req.user.id !== studentId) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Access denied' 
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+    if (req.user.role === 'teacher') {
+      const membership = await GroupMember.findOne({
+        where: { studentId },
+        include: [{ model: Group, as: 'group', where: { teacherId: req.user.id }, attributes: ['id'] }]
       });
+      const direct = await User.findOne({ where: { id: studentId, teacherId: req.user.id }, attributes: ['id'] });
+      if (!membership && !direct) return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
     const submissions = await Submission.findAll({
@@ -286,9 +312,14 @@ exports.getSubmission = async (req, res) => {
       });
     }
 
+    const responseSubmission = submission.toJSON();
+    if (req.user.role === 'student' && responseSubmission.worksheet) {
+      delete responseSubmission.worksheet.questions;
+    }
+
     res.json({
       success: true,
-      data: { submission }
+      data: { submission: responseSubmission }
     });
   } catch (error) {
     logger.error('Get submission error:', error);

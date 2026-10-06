@@ -14,9 +14,23 @@ ALTER TABLE submissions
   ADD COLUMN IF NOT EXISTS attempt_number INTEGER NOT NULL DEFAULT 1,
   ADD COLUMN IF NOT EXISTS time_spent_seconds INTEGER;
 
--- Backfill: las submissions existentes son todas el intento #1 de cada alumno
--- (antes de este cambio solo se permitía un intento). Ya cubierto por el
--- DEFAULT 1 de arriba, no se requiere UPDATE adicional.
+-- Backfill robusto: si producción ya tenía más de una entrega para el mismo
+-- alumno/worksheet antes de instalar esta migración, ADD COLUMN asigna 1 a
+-- todas. Renumeramos de forma determinista ANTES de crear el UNIQUE para que
+-- el primer deploy no falle a mitad de la migración.
+WITH ranked AS (
+  SELECT id,
+         ROW_NUMBER() OVER (
+           PARTITION BY worksheet_id, student_id
+           ORDER BY submitted_at ASC NULLS LAST, id
+         ) AS rn
+  FROM submissions
+)
+UPDATE submissions s
+SET attempt_number = ranked.rn
+FROM ranked
+WHERE s.id = ranked.id
+  AND s.attempt_number IS DISTINCT FROM ranked.rn;
 
 -- Constraint: un alumno no puede tener dos submissions con el mismo número
 -- de intento para el mismo worksheet.

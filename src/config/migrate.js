@@ -63,27 +63,35 @@ async function runMigration(filename) {
   throw new Error(`Unsupported migration type: ${filename}`);
 }
 
-async function main() {
-  try {
-    await sequelize.authenticate();
-    await ensureMigrationsTable();
+/**
+ * Aplica las migraciones pendientes. No cierra la conexión ni termina el
+ * proceso, así que también se puede llamar al arrancar el servidor.
+ */
+async function runMigrations() {
+  await sequelize.authenticate();
+  await ensureMigrationsTable();
 
-    const files = fs.readdirSync(migrationsDir)
-      .filter(name => name.endsWith('.sql') || name.endsWith('.js'))
-      .sort();
+  const files = fs.readdirSync(migrationsDir)
+    .filter(name => name.endsWith('.sql') || name.endsWith('.js'))
+    .sort();
 
-    for (const filename of files) {
-      if (await isApplied(filename)) {
-        console.log(`✓ ${filename} already applied`);
-        continue;
-      }
-
-      await runMigration(filename);
-      await markApplied(filename);
-      console.log(`✓ ${filename} applied`);
+  for (const filename of files) {
+    if (await isApplied(filename)) {
+      console.log(`✓ ${filename} already applied`);
+      continue;
     }
 
-    console.log('All repository migrations are up to date.');
+    await runMigration(filename);
+    await markApplied(filename);
+    console.log(`✓ ${filename} applied`);
+  }
+
+  console.log('All repository migrations are up to date.');
+}
+
+async function main() {
+  try {
+    await runMigrations();
     await sequelize.close();
     process.exit(0);
   } catch (error) {
@@ -94,4 +102,8 @@ async function main() {
   }
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = { runMigrations };

@@ -18,10 +18,13 @@
 const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
 const { requireRole }  = require('../middleware/roleCheck');
-const { getMyStudents, getStudentProfile } = require('../controllers/teacherController');
+const { getMyStudents, getStudentProfile, getDashboardStats } = require('../controllers/teacherController');
 
 router.use(authenticate);
 router.use(requireRole('teacher', 'admin'));
+
+// GET /api/teachers/dashboard-stats
+router.get('/dashboard-stats', getDashboardStats);
 
 // GET /api/teachers/students
 router.get('/students', getMyStudents);

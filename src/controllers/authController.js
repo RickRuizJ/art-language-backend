@@ -20,7 +20,7 @@ exports.register = [
   body('password').isLength({ min: 6 }),
   body('firstName').notEmpty().trim(),
   body('lastName').notEmpty().trim(),
-  body('role').isIn(['teacher', 'student']),
+  body('role').optional().isIn(['student']),
 
   async (req, res) => {
     try {
@@ -33,7 +33,8 @@ exports.register = [
         });
       }
 
-      const { email, password, firstName, lastName, role } = req.body;
+      const { email, password, firstName, lastName } = req.body;
+      const role = 'student';
 
       // Check if user exists
       const existingUser = await User.findOne({ where: { email } });

@@ -116,9 +116,20 @@ exports.getWorkbookById = async (req, res) => {
       });
     }
 
+    const workbookPayload = workbook.toJSON();
+    if (req.user.role === 'student') {
+      workbookPayload.worksheets = (workbookPayload.worksheets || [])
+        .filter(w => w.isPublished)
+        .map(w => {
+          const safe = { ...w };
+          delete safe.questions;
+          return safe;
+        });
+    }
+
     res.json({
       success: true,
-      data: { workbook }
+      data: { workbook: workbookPayload }
     });
   } catch (error) {
     console.error('Get workbook error:', error);

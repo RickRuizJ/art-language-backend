@@ -10,6 +10,7 @@ router.use(auth);
 
 // ─── Static POST routes FIRST (before any /:id catch-all) ───────────────────
 router.post('/upload', roleCheck('teacher', 'admin'), uploadController.uploadWorksheet);
+router.post('/external-link', roleCheck('teacher', 'admin'), uploadController.saveExternalLink);
 router.post('/google-link', roleCheck('teacher', 'admin'), uploadController.saveGoogleLink);
 
 // ─── Collection routes ───────────────────────────────────────────────────────

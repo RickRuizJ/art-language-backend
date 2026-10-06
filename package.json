@@ -7,8 +7,8 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "migrate": "node src/config/migrate.js",
-    "seed": "node src/config/seed.js",
-    "test": "jest"
+    "test": "jest",
+    "test:integration": "node scripts/integration-test.js"
   },
   "keywords": [
     "lms",

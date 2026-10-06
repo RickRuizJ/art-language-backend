@@ -54,8 +54,14 @@ class GradingService {
       let maxScore = 0;
       const feedback = [];
 
-      for (const question of questions) {
-        maxScore += question.points || 0;
+      for (const rawQuestion of questions) {
+        // Preguntas sin puntos válidos valen 10 (el valor por defecto de los
+        // constructores); antes valían 0 y el resultado salía siempre 0/0.
+        const question = {
+          ...rawQuestion,
+          points: Number(rawQuestion.points) > 0 ? Number(rawQuestion.points) : 10
+        };
+        maxScore += question.points;
 
         const studentAnswer = answers[question.id];
         const result = this.gradeQuestion(question, studentAnswer);
@@ -225,6 +231,18 @@ class GradingService {
         pointsEarned: 0,
         feedback: 'Invalid answer format',
         requiresManualReview: false
+      };
+    }
+
+    // Sin respuesta modelo (el constructor sólo guarda `sampleAnswer`), no se
+    // puede calificar automáticamente: pasa a revisión del profesor. Antes esto
+    // lanzaba un TypeError y la entrega completa fallaba con 500.
+    if (typeof question.correctAnswer !== 'string' || !question.correctAnswer.trim()) {
+      return {
+        correct: null,
+        pointsEarned: 0,
+        feedback: 'Pending manual review.',
+        requiresManualReview: true
       };
     }
 
