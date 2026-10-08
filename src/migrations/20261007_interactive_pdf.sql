@@ -7,7 +7,9 @@ ALTER TABLE submissions ADD COLUMN IF NOT EXISTS attempt_token UUID;
 ALTER TABLE submissions ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
 ALTER TABLE submissions ADD COLUMN IF NOT EXISTS grading_snapshot JSONB;
 ALTER TABLE submissions ADD COLUMN IF NOT EXISTS auto_score NUMERIC(10,2);
-ALTER TABLE submissions ALTER COLUMN score TYPE NUMERIC(10,2);
+-- Preserve score and all views/rules depending on it. Legacy databases use
+-- NUMERIC(5,2); the interactive editor validates a maximum of 999 total points.
+-- Do not ALTER TYPE here, even if a database already has a wider numeric type.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_submission_token ON submissions(attempt_token) WHERE attempt_token IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_submission_analytics ON submissions(worksheet_id,student_id,submitted_at DESC,attempt_number DESC);
 CREATE TABLE IF NOT EXISTS worksheet_drafts (

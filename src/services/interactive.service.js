@@ -53,6 +53,7 @@ function validateLayout(body,fileId){
   q.sampleAnswer=typeof f.sampleAnswer==='string'?f.sampleAnswer.slice(0,2000):'';
   questions.push(q);geometry.push({id:f.id,page:f.page,x:f.x,y:f.y,width:f.width,height:f.height});
  }
+ if(questions.reduce((total,q)=>total+q.points,0)>999)throw fail('Use at most 999 total points per activity. Reduce field points before saving.');
  return {questions,interactiveLayout:{version:1,fileId,pageCount:body.pageCount,fields:geometry},feedbackMode:body.feedbackMode,maxAttempts:body.maxAttempts,autoGrade:true};
 }
 function cleanAnswers(answers,questions){

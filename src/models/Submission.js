@@ -52,7 +52,8 @@ const Submission = sequelize.define('Submission', {
     defaultValue: []
   },
   score: {
-    type: DataTypes.DECIMAL(10, 2)
+    // Keep the legacy score type; views may depend on this column.
+    type: DataTypes.DECIMAL(5, 2)
   },
   maxScore: {
     type: DataTypes.INTEGER,
