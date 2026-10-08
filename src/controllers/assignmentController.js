@@ -1,3 +1,4 @@
+const {studentSubmission}=require('../services/interactive.service');
 'use strict';
 /**
  * controllers/assignmentController.js
@@ -14,24 +15,8 @@
 const sequelize = require('../config/database');
 
 // Quita las claves de respuestas de las preguntas antes de enviarlas a un alumno.
-function stripAnswerKeys(json, role) {
-  if (role !== 'student' || !json?.worksheet || !Array.isArray(json.worksheet.questions)) return json;
-  json.worksheet.questions = json.worksheet.questions.map(q => {
-    if (!q || ['external_link', 'google_embed'].includes(q.type)) return q;
-    // Never expose grading keys to students.
-    // For matching questions we must preserve the LEFT prompts and provide a
-    // shuffled list of right-side options; the player expects `pairs` +
-    // `matchingOptions`. Removing `pairs` made matching questions render blank.
-    const { correctAnswer, correctAnswers, correctOrder, sampleAnswer, explanation, pairs, ...safe } = q;
-    if (q.type === 'matching' && Array.isArray(pairs)) {
-      const rights = pairs.map(p => p?.right).filter(Boolean);
-      safe.pairs = pairs.map(p => ({ left: p?.left ?? '' }));
-      safe.matchingOptions = rights.sort(() => Math.random() - 0.5);
-    }
-    return safe;
-  });
-  return json;
-}
+const {publicQuestion}=require('../services/interactive.service');
+function stripAnswerKeys(json,role){if(role==='student' && json?.worksheet?.questions)json.worksheet.questions=json.worksheet.questions.map(publicQuestion);return json;}
 const { Assignment, Worksheet, Group, GroupMember, Submission, User } = require('../models');
 
 /**
@@ -136,10 +121,11 @@ const getGroupAssignments = async (req, res) => {
     if (req.user.role === 'student') {
       const submissions = await Submission.findAll({
         where: { studentId: req.user.id },
-        attributes: ['worksheetId', 'status', 'score', 'maxScore', 'submittedAt']
+        attributes: ['worksheetId', 'status', 'score', 'maxScore', 'gradingSnapshot', 'answers', 'submittedAt'],
+        order: [['attemptNumber','ASC'],['submittedAt','ASC']]
       });
       const subMap = {};
-      submissions.forEach(s => { subMap[s.worksheetId] = s; });
+      submissions.forEach(s => { subMap[s.worksheetId] = studentSubmission(s); });
 
       result = assignments.map(a => ({
         ...stripAnswerKeys(a.toJSON(), req.user.role),
@@ -180,10 +166,11 @@ const getStudentAssignments = async (req, res) => {
 
     const submissions = await Submission.findAll({
       where: { studentId },
-      attributes: ['worksheetId', 'status', 'score', 'maxScore', 'submittedAt']
+      attributes: ['worksheetId', 'status', 'score', 'maxScore', 'gradingSnapshot', 'answers', 'submittedAt'],
+        order: [['attemptNumber','ASC'],['submittedAt','ASC']]
     });
     const subMap = {};
-    submissions.forEach(s => { subMap[s.worksheetId] = s; });
+    submissions.forEach(s => { subMap[s.worksheetId] = studentSubmission(s); });
 
     const enriched = assignments.map(a => ({
       ...stripAnswerKeys(a.toJSON(), req.user.role),

@@ -3,3 +3,6 @@ node_modules
 dist
 build
 npm-debug.log
+logs/
+*.log
+tests/system/results/

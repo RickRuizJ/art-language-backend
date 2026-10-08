@@ -59,7 +59,7 @@ class GradingService {
         // constructores); antes valían 0 y el resultado salía siempre 0/0.
         const question = {
           ...rawQuestion,
-          points: Number(rawQuestion.points) > 0 ? Number(rawQuestion.points) : 10
+          points: Number.isFinite(Number(rawQuestion.points)) && Number(rawQuestion.points)>=0 ? Number(rawQuestion.points) : 10
         };
         maxScore += question.points;
 
@@ -101,6 +101,7 @@ class GradingService {
    * @returns {Object} { correct, pointsEarned, feedback }
    */
   gradeQuestion(question, answer) {
+    if(question.teacherReview)return {correct:null,pointsEarned:0,requiresManualReview:true,feedback:'Pending manual review.'};
     const type = question.type;
 
     switch (type) {
@@ -153,7 +154,7 @@ class GradingService {
    * Answer format: boolean or 'true'/'false' string
    */
   gradeTrueFalse(question, answer) {
-    const normalize = (v) => (typeof v === 'string' ? v.toLowerCase().trim() : v);
+    const normalize = (v) => String(v).toLowerCase().trim();
     const isCorrect = normalize(answer) === normalize(question.correctAnswer);
 
     return {
@@ -174,11 +175,9 @@ class GradingService {
       return { correct: false, pointsEarned: 0, feedback: 'Invalid answer format' };
     }
 
-    const acceptable = Array.isArray(question.correctAnswer)
-      ? question.correctAnswer
-      : [question.correctAnswer];
+    const acceptable = question.acceptedAnswers?.length ? question.acceptedAnswers : Array.isArray(question.correctAnswer) ? question.correctAnswer : [question.correctAnswer];
 
-    const normalize = (v) => (question.caseSensitive ? v.trim() : v.trim().toLowerCase());
+    const normalize = (v) => (question.caseSensitive ? v.trim().replace(/\s+/g,' ') : v.trim().replace(/\s+/g,' ').toLowerCase());
     const studentAnswer = normalize(answer);
     const isCorrect = acceptable.some(a => normalize(String(a)) === studentAnswer);
 
@@ -225,68 +224,9 @@ class GradingService {
    * and flags for manual review
    */
   gradeShortAnswer(question, answer) {
-    if (typeof answer !== 'string') {
-      return {
-        correct: false,
-        pointsEarned: 0,
-        feedback: 'Invalid answer format',
-        requiresManualReview: false
-      };
-    }
-
-    // Sin respuesta modelo (el constructor sólo guarda `sampleAnswer`), no se
-    // puede calificar automáticamente: pasa a revisión del profesor. Antes esto
-    // lanzaba un TypeError y la entrega completa fallaba con 500.
-    if (typeof question.correctAnswer !== 'string' || !question.correctAnswer.trim()) {
-      return {
-        correct: null,
-        pointsEarned: 0,
-        feedback: 'Pending manual review.',
-        requiresManualReview: true
-      };
-    }
-
-    let studentAnswer = answer.trim();
-    let correctAnswer = question.correctAnswer.trim();
-
-    // Apply case sensitivity
-    if (!question.caseSensitive) {
-      studentAnswer = studentAnswer.toLowerCase();
-      correctAnswer = correctAnswer.toLowerCase();
-    }
-
-    const isExactMatch = studentAnswer === correctAnswer;
-
-    if (isExactMatch) {
-      return {
-        correct: true,
-        pointsEarned: question.points,
-        feedback: 'Correct!',
-        requiresManualReview: false
-      };
-    }
-
-    // Check for close match (80% similarity)
-    const similarity = this.calculateStringSimilarity(studentAnswer, correctAnswer);
-    
-    if (similarity >= 0.8) {
-      // Award partial credit
-      const partialPoints = Math.round(question.points * similarity);
-      return {
-        correct: false,
-        pointsEarned: partialPoints,
-        feedback: `Close answer. Awarded ${partialPoints}/${question.points} points.`,
-        requiresManualReview: true
-      };
-    }
-
-    // Completely wrong or requires manual review
-    return {
-      correct: false,
-      pointsEarned: 0,
-      feedback: 'Incorrect. Flagged for manual review.',
-      requiresManualReview: true
-    };
+    if(question.acceptedAnswers?.length) return this.gradeFillBlank(question,answer);
+    if(typeof question.correctAnswer==='string' && question.correctAnswer.trim()) return this.gradeFillBlank(question,answer);
+    return {correct:null,pointsEarned:0,feedback:'Pending manual review.',requiresManualReview:true};
   }
 
   /**

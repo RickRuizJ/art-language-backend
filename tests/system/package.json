@@ -1,0 +1,12 @@
+{
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@electric-sql/pglite-socket": "^0.2.11",
+    "@playwright/test": "1.51.1"
+  },
+  "private": true,
+  "scripts": {
+    "test:api": "node run-api.mjs",
+    "test:browser": "node run-browser.mjs"
+  }
+}

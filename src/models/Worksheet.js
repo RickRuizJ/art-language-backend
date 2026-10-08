@@ -69,6 +69,9 @@ const Worksheet = sequelize.define('Worksheet', {
     defaultValue: 30,
     field: 'estimated_time'
   },
+  interactiveLayout: {type:DataTypes.JSONB,allowNull:true,field:'interactive_layout'},
+  layoutRevision: {type:DataTypes.INTEGER,defaultValue:0,field:'layout_revision'},
+  feedbackMode: {type:DataTypes.STRING(30),defaultValue:'score',field:'feedback_mode'},
   questions: {
     type: DataTypes.JSONB,
     defaultValue: []

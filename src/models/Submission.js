@@ -42,13 +42,17 @@ const Submission = sequelize.define('Submission', {
       key: 'id'
     }
   },
+  attemptToken: {type:DataTypes.UUID,field:'attempt_token'},
+  startedAt: {type:DataTypes.DATE,field:'started_at'},
+  gradingSnapshot: {type:DataTypes.JSONB,field:'grading_snapshot'},
+  autoScore: {type:DataTypes.DECIMAL(10,2),field:'auto_score'},
   answers: {
     type: DataTypes.JSONB,
     allowNull: false,
     defaultValue: []
   },
   score: {
-    type: DataTypes.DECIMAL(5, 2)
+    type: DataTypes.DECIMAL(10, 2)
   },
   maxScore: {
     type: DataTypes.INTEGER,

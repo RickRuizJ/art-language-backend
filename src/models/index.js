@@ -82,6 +82,7 @@ Group.hasMany(Message, { foreignKey: 'groupId', as: 'messages' });
 
 // ─── Exports ──────────────────────────────────────────────────────────────────
 module.exports = {
+  WorksheetDraft: require('./WorksheetDraft'),
   User,
   Worksheet,
   Group,

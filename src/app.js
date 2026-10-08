@@ -132,6 +132,7 @@ app.get('/health/ready', async (req, res) => {
 // ─── API Routes ───────────────────────────────────────────────────────────────
 app.use('/api/auth',        authRoutes);
 app.use('/api/users',       userRoutes);
+app.use('/api/analytics', require('./routes/analytics'));
 app.use('/api/worksheets',  worksheetRoutes);
 app.use('/api/groups',      groupRoutes);
 app.use('/api/submissions', submissionRoutes);

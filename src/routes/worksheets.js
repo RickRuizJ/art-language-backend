@@ -13,6 +13,11 @@ router.post('/upload', roleCheck('teacher', 'admin'), uploadController.uploadWor
 router.post('/external-link', roleCheck('teacher', 'admin'), uploadController.saveExternalLink);
 router.post('/google-link', roleCheck('teacher', 'admin'), uploadController.saveGoogleLink);
 
+const interactive = require('../controllers/interactiveController');
+router.put('/:id/interactive', roleCheck('teacher', 'admin'), interactive.saveLayout);
+router.post('/:id/attempt', roleCheck('student'), interactive.startAttempt);
+router.put('/:id/draft', roleCheck('student'), interactive.saveDraft);
+
 // ─── Collection routes ───────────────────────────────────────────────────────
 router.get('/', worksheetController.getWorksheets);
 router.post('/', roleCheck('teacher', 'admin'), worksheetController.createWorksheet);

@@ -34,22 +34,8 @@ function normalizeQuestions(questions = []) {
   }));
 }
 
-function sanitizeQuestionsForStudent(questions = []) {
-  return questions.map((q) => {
-    const clean = { ...q };
-    delete clean.correctAnswer;
-    delete clean.correctAnswers;
-    delete clean.sampleAnswer;
-    delete clean.explanation;
-
-    if (clean.type === 'matching' && Array.isArray(clean.pairs)) {
-      const rights = clean.pairs.map(p => p.right).filter(Boolean);
-      clean.pairs = clean.pairs.map(p => ({ left: p.left }));
-      clean.matchingOptions = rights.sort(() => Math.random() - 0.5);
-    }
-    return clean;
-  });
-}
+const {publicQuestion,publicWorksheet}=require('../services/interactive.service');
+function sanitizeQuestionsForStudent(questions=[]){return questions.map((q,i)=>publicQuestion({...q,id:q.id||`legacy-${i+1}`}));}
 
 async function studentCanAccessWorksheet(studentId, worksheetId) {
   const [memberships, student] = await Promise.all([
@@ -259,6 +245,7 @@ const updateWorksheet = async (req, res) => {
       return res.status(403).json({ success: false, message: 'You do not own this worksheet.' });
     }
 
+    if(worksheet.interactiveLayout && req.body.questions !== undefined)return res.status(400).json({success:false,message:'Edit PDF fields through Make Interactive.'});
     const allowed = [
       'title', 'description', 'instructions', 'subject', 'gradeLevel',
       'difficulty', 'estimatedTime', 'autoGrade', 'passScore',

@@ -79,5 +79,5 @@ const PDF=Buffer.from('%PDF-1.4 x');
  console.log('INFRA');
  r=await request(app).post('/api/auth/login').send({email:'zz@x.com',password:'x'});
  for(let i=0;i<5;i++)r=await request(app).get('/health');ok('health ok',r.status===200,r.body);
- console.log(`\nRESULTADO ${p} OK / ${f} fallos`);st.close();await sequelize.close();process.exit(0);
+ console.log(`\nRESULTADO ${p} OK / ${f} fallos`);st.close();await sequelize.close();process.exit(f ? 1 : 0);
 })().catch(e=>{console.error('FATAL',e);process.exit(2)});

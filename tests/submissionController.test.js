@@ -1,3 +1,4 @@
+jest.mock('../src/config/database',()=>({transaction:jest.fn(fn=>fn({LOCK:{UPDATE:'UPDATE'}}))}));
 // Sprint 0 stabilization — tests for the configurable-attempts behavior
 // requested in the technical review. Models and the grading service are
 // mocked; this only protects the maxAttempts decision logic itself.
@@ -19,7 +20,7 @@ jest.mock('../src/models', () => ({
     create: (...a) => mockSubmissionCreate(...a),
     findAll: jest.fn(),
   },
-  Worksheet: { findByPk: (...a) => mockWorksheetFindByPk(...a) },
+  Worksheet: { findByPk: async (...a) => {const w=await mockWorksheetFindByPk(...a);return w?{questions:[{id:'q1',type:'short_answer',points:10}],...w,toJSON:()=>w}:null;} },
   User: { findByPk: jest.fn().mockResolvedValue({ groupId: null }) },
   Group: {},
   GroupMember: { findAll: jest.fn().mockResolvedValue([{ groupId: 'group-1' }]) },
@@ -177,6 +178,6 @@ describe('POST /submissions — permisos', () => {
       feedback: [{ questionId: 'q1', correct: null, pointsEarned: 0, requiresManualReview: true }],
     });
     await request(buildApp()).post('/submissions').send({ worksheetId: 'ws-1', answers: [{ questionId: 'q1', answer: 'x' }] });
-    expect(mockSubmissionCreate).toHaveBeenCalledWith(expect.objectContaining({ status: 'submitted' }));
+    expect(mockSubmissionCreate).toHaveBeenCalledWith(expect.objectContaining({ status: 'submitted' }),expect.any(Object));
   });
 });

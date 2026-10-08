@@ -1,3 +1,4 @@
+const {studentSubmission}=require('../services/interactive.service');
 'use strict';
 /**
  * controllers/studentController.js
@@ -119,13 +120,13 @@ const getStudentDashboard = async (req, res) => {
       // 4. Student submissions
       const submissions = await Submission.findAll({
         where:      { studentId },
-        attributes: ['id', 'worksheetId', 'status', 'score', 'maxScore', 'submittedAt']
+        attributes: ['id', 'worksheetId', 'status', 'score', 'maxScore', 'gradingSnapshot', 'answers', 'submittedAt'],
+        order: [['attemptNumber','ASC'],['submittedAt','ASC']]
       });
 
       const subMap = {};
       submissions.forEach(s => {
-        const current = subMap[s.worksheetId];
-        if (!current || new Date(s.submittedAt) > new Date(current.submittedAt)) subMap[s.worksheetId] = s;
+        subMap[s.worksheetId] = studentSubmission(s);
       });
 
       assignments = rawAssignments.map(a => {
@@ -252,11 +253,12 @@ const getMyAssignments = async (req, res) => {
 
     const submissions = await Submission.findAll({
       where:      { studentId },
-      attributes: ['id', 'worksheetId', 'status', 'score', 'maxScore', 'submittedAt']
+      attributes: ['id', 'worksheetId', 'status', 'score', 'maxScore', 'gradingSnapshot', 'answers', 'submittedAt'],
+        order: [['attemptNumber','ASC'],['submittedAt','ASC']]
     });
 
     const subMap = {};
-    submissions.forEach(s => { subMap[s.worksheetId] = s; });
+    submissions.forEach(s => { subMap[s.worksheetId] = studentSubmission(s); });
 
     const result = assignments.map(a => ({
       ...a.toJSON(),
