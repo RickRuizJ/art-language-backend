@@ -6,3 +6,6 @@ npm-debug.log
 logs/
 *.log
 tests/system/results/
+
+.env*
+!.env.example

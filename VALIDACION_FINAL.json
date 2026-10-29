@@ -1,0 +1,907 @@
+{
+  "date": "2026-10-28",
+  "assessment": "GO controlled staging / NO-GO production pending external validation",
+  "runtime": {
+    "node": "24.22.1",
+    "npm": "11.9.0",
+    "browser": "Chromium 141",
+    "database": "PGlite 0.5.8 isolated synthetic data"
+  },
+  "production_changed": false,
+  "push_or_deployment": false,
+  "real_email_sent": false,
+  "checks": {
+    "backend_unit": 60,
+    "frontend_unit": 41,
+    "baseline_api": 74,
+    "security_api": 105,
+    "startup": 11,
+    "browser_ui": 32,
+    "counted_total": 323,
+    "full_pdf_flow": "PASS",
+    "backend_syntax_files": 74,
+    "frontend_production_build": "PASS"
+  },
+  "commands": [
+    {
+      "name": "backend unit",
+      "command": "npm test -- --runInBand",
+      "cwd": "backend",
+      "exit_code": 0,
+      "log": "backend-unit-final.log"
+    },
+    {
+      "name": "baseline API",
+      "command": "npm run test:integration",
+      "cwd": "backend",
+      "exit_code": 0,
+      "log": "baseline-api-final.log"
+    },
+    {
+      "name": "security regression",
+      "command": "npm run test:security",
+      "cwd": "backend",
+      "exit_code": 0,
+      "log": "security-api-final.log"
+    },
+    {
+      "name": "server startup",
+      "command": "npm run test:startup",
+      "cwd": "backend",
+      "exit_code": 0,
+      "log": "startup-final.log"
+    }
+  ],
+  "security_api": {
+    "checks": [
+      {
+        "name": "migration preserves users",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "migration preserves groups",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "migration preserves worksheets",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "migration preserves assignments",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "migration preserves submissions",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "migration preserves manual_grades",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "duplicate memberships retained as archived evidence",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "legacy direct membership normalized",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "both existing manual grades retained",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "required schema becomes ready",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "existing bcrypt account logs in after migration",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "no password/hash exposed",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "existing teacher logs in",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "expired token rejected",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "student cannot manage accounts",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "register rejects missing code",
+        "status": "PASS",
+        "detail": {
+          "status": 400
+        }
+      },
+      {
+        "name": "register rejects invalid code",
+        "status": "PASS",
+        "detail": {
+          "status": 400
+        }
+      },
+      {
+        "name": "register rejects admin escalation",
+        "status": "PASS",
+        "detail": {
+          "status": 400
+        }
+      },
+      {
+        "name": "register rejects wrong teacher secret",
+        "status": "PASS",
+        "detail": {
+          "status": 403
+        }
+      },
+      {
+        "name": "register rejects non-string password",
+        "status": "PASS",
+        "detail": {
+          "status": 400
+        }
+      },
+      {
+        "name": "register rejects over-72-byte password",
+        "status": "PASS",
+        "detail": {
+          "status": 400
+        }
+      },
+      {
+        "name": "validation redacts password",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "registration uses group and role from server",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "duplicate account rejected",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "shared registration secret creates only teacher",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "teacher personal login does not require general secret",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "rotation invalidates old general secret",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "unrelated teacher cannot patch",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "unrelated teacher cannot password",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "teacher creates temporary student",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "temporary student logs in for password change",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "temporary session cannot bypass password change",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "temporary session may retrieve own identity",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "temporary student sets personal password",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "same-second prior token revoked by version",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "new session immediately works after password change",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "expired temporary credentials rejected",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "teacher reset preserves Veronica account and work",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "teacher password reset revokes old session",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "Veronica personal-password-change requirement is enforced",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "Veronica completes password change without losing history",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "disabled account token rejected",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "reactivation does not revive revoked session",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "public recovery response is uniform",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "outbox sends only to active known account",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "reset stores only token hash with 30-minute expiry",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "parallel reset requests yield only one success",
+        "status": "PASS",
+        "detail": {
+          "statuses": [
+            200,
+            400
+          ]
+        }
+      },
+      {
+        "name": "consumed token cannot be replayed",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "expired reset token rejected",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "provider failure does not enumerate accounts",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "database rate budget is enforced",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "teacher cannot queue recovery for unrelated student",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "manual grade links an activity and assignment",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "repeated manual grade returns conflict",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "selecting same activity prevents duplicate student result",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "shared activity records different student result",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "matching imported grade is flagged instead of duplicated",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "manual grade rejects null",
+        "status": "PASS",
+        "detail": {
+          "status": 400
+        }
+      },
+      {
+        "name": "manual grade rejects boolean",
+        "status": "PASS",
+        "detail": {
+          "status": 400
+        }
+      },
+      {
+        "name": "manual grade rejects array",
+        "status": "PASS",
+        "detail": {
+          "status": 400
+        }
+      },
+      {
+        "name": "manual grade rejects whitespace",
+        "status": "PASS",
+        "detail": {
+          "status": 400
+        }
+      },
+      {
+        "name": "manual grade rejects negative",
+        "status": "PASS",
+        "detail": {
+          "status": 400
+        }
+      },
+      {
+        "name": "manual grade rejects over maximum",
+        "status": "PASS",
+        "detail": {
+          "status": 400
+        }
+      },
+      {
+        "name": "manual grade rejects zero maximum",
+        "status": "PASS",
+        "detail": {
+          "status": 400
+        }
+      },
+      {
+        "name": "manual grade rejects excess precision",
+        "status": "PASS",
+        "detail": {
+          "status": 400
+        }
+      },
+      {
+        "name": "manual grade rejects impossible date",
+        "status": "PASS",
+        "detail": {
+          "status": 400
+        }
+      },
+      {
+        "name": "manual grade rejects invalid URL",
+        "status": "PASS",
+        "detail": {
+          "status": 400
+        }
+      },
+      {
+        "name": "manual grade rejects invalid scheme",
+        "status": "PASS",
+        "detail": {
+          "status": 400
+        }
+      },
+      {
+        "name": "teacher cannot create grade in unrelated group",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "student cannot create manual grade",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "official average ignores manual results",
+        "status": "PASS",
+        "detail": {
+          "automatic": 100,
+          "manual": 50
+        }
+      },
+      {
+        "name": "student official average matches teacher automatic average",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "student academic history identifies manual and automatic",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "official Analytics excludes unreleased feedback",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "student and teacher apply the same release gate",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "shared profile excludes other teacher records",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "unrelated teacher cannot correct grade",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "parallel grade corrections reject stale version",
+        "status": "PASS",
+        "detail": {
+          "statuses": [
+            200,
+            409
+          ]
+        }
+      },
+      {
+        "name": "correction history and audit are retained",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "archive preserves grade and history",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "archived grade can be explicitly restored",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "manual actions never alter automatic submission",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "audit events are append-only in database",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "password changes invalidate pending recovery jobs",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "manual listing is paginated with accurate total",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "CSV export includes all filtered rows and safe formula text",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "manual listing excludes other teacher grades",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "group removal clears both representations: new",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "removed student cannot access group assignments",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "former teacher loses management after last removal",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "removal preserves student and all grades",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "group removal clears both representations: legacy",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "removed student cannot access group assignments",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "former teacher loses management after last removal",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "removal preserves student and all grades",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "stale teacher_id cannot authorize account takeover",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "group archive preserves history and closes assignments",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "archived group grants no residual student management",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "existing student cannot join inactive group",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "new student cannot register with inactive code",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "administrator retains authorized management",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "audit never contains passwords, tokens or shared registration secret",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "readiness rejects missing required column",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "readiness rejects migration failure",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "readiness recovers only after verified schema",
+        "status": "PASS",
+        "detail": {}
+      }
+    ],
+    "passed": 105,
+    "failed": 0
+  },
+  "startup": [
+    {
+      "name": "server entrypoint responds to liveness",
+      "status": "PASS"
+    },
+    {
+      "name": "empty schema is not ready",
+      "status": "PASS"
+    },
+    {
+      "name": "API blocked until schema ready",
+      "status": "PASS"
+    },
+    {
+      "name": "complete migrations allow readiness",
+      "status": "PASS"
+    },
+    {
+      "name": "configured auth IP limit works",
+      "status": "PASS"
+    },
+    {
+      "name": "CORS rejects unrelated origin without internal details",
+      "status": "PASS"
+    },
+    {
+      "name": "readiness validates columns, not only connectivity",
+      "status": "PASS"
+    },
+    {
+      "name": "restored verified schema becomes ready",
+      "status": "PASS"
+    },
+    {
+      "name": "failed migration is observed by server",
+      "status": "PASS"
+    },
+    {
+      "name": "actual failed migration keeps readiness disabled",
+      "status": "PASS"
+    },
+    {
+      "name": "production refuses disabled TLS validation",
+      "status": "PASS"
+    }
+  ],
+  "browser_ui": {
+    "results": [
+      {
+        "name": "teacher personal login",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "authorized roster visible",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "teacher creates student",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "teacher edits student",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "teacher disables student",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "teacher reactivates student",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "password reset uses two masked fields",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "teacher sets temporary password",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "temporary login requires change",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "temporary password changed on mobile",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "existing assignment can be selected",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "manual grade saved from UI",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "official automatic average remains unchanged",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "manual source is explicit",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "manual correction requires and records reason",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "correction history visible",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "duplicate activity result is rejected visibly",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "CSV downloads complete filtered manual result",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "student sees manual academic history",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "student sees manual and automatic sources",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "teacher profile includes authorized progress and grades",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "mobile Students page fits viewport",
+        "status": "PASS",
+        "detail": {
+          "width": 390,
+          "scroll": 390
+        }
+      },
+      {
+        "name": "mobile Analytics page fits viewport",
+        "status": "PASS",
+        "detail": {
+          "width": 390,
+          "scroll": 390
+        }
+      },
+      {
+        "name": "mobile archive retains history",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "archived grade can be restored with reason",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "Practice page redirects anonymous visitors",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "mobile teacher registration accepts one general secret",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "mobile student registers with group code",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "forgot password UI returns generic request status",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "mobile recovery form consumes valid token",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "recovered student retains academic history",
+        "status": "PASS",
+        "detail": {}
+      },
+      {
+        "name": "no uncaught browser errors",
+        "status": "PASS",
+        "detail": {
+          "errors": []
+        }
+      }
+    ],
+    "errors": []
+  },
+  "audits": {
+    "backend": {
+      "production": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0,
+        "total": 0
+      },
+      "all_dependencies": {
+        "info": 0,
+        "low": 6,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0,
+        "total": 6
+      }
+    },
+    "frontend": {
+      "production": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0,
+        "total": 0
+      },
+      "all_dependencies": {
+        "info": 0,
+        "low": 6,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0,
+        "total": 6
+      }
+    },
+    "test_tools": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    }
+  },
+  "remaining": [
+    "Representative real PostgreSQL clone migration and restore",
+    "Two-connection PostgreSQL concurrency",
+    "Provider TLS, Resend delivery and Cloudinary real services",
+    "Remote CI and hosting validation",
+    "Dev-only LOW deepmerge/Jest chain",
+    "Legacy process-level error logging",
+    "Existing localStorage JWT / advanced Practice persistence"
+  ]
+}

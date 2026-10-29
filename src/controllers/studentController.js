@@ -49,7 +49,9 @@ async function resolveAllGroupIds(studentId, directGroupId) {
     console.error('resolveAllGroupIds GroupMember error:', err.message);
   }
 
-  return [...ids];
+  if(!ids.size)return [];
+  const active=await Group.findAll({where:{id:{[Op.in]:[...ids]},isActive:{[Op.not]:false}},attributes:['id']});
+  return active.map(g=>g.id);
 }
 
 /**
@@ -66,6 +68,7 @@ const getStudentDashboard = async (req, res) => {
         model:    Group,
         as:       'group',
         required: false,
+        where: {isActive:{[Op.not]:false}},
         attributes: ['id', 'name', 'description', 'subject', 'gradeLevel'],
         include: [{
           model:      User,
@@ -138,20 +141,9 @@ const getStudentDashboard = async (req, res) => {
         };
       });
 
-      // 5. Stats
-      const assignedWorksheetIds = new Set(assignments.map(a => a.worksheetId));
-      const latestAssignedSubs = Object.values(subMap).filter(s => assignedWorksheetIds.has(s.worksheetId));
-      const completed = latestAssignedSubs.filter(s => ['submitted', 'graded', 'reviewed'].includes(s.status));
-      const graded = latestAssignedSubs.filter(s => ['graded', 'reviewed'].includes(s.status) && s.score !== null);
+      // The official average uses automatic assigned worksheets only, as in Analytics.
+      stats = require('../services/academic.service').automaticStats(rawAssignments, Object.values(subMap));
 
-      stats.total     = assignments.length;
-      stats.completed = completed.length;
-      stats.pending   = Math.max(0, stats.total - stats.completed);
-
-      if (graded.length > 0) {
-        const sum = graded.reduce((acc, s) => acc + (s.maxScore > 0 ? (s.score / s.maxScore) * 100 : 0), 0);
-        stats.avgScore = Math.round(sum / graded.length);
-      }
     }
 
     const studentJson = student.toJSON();
@@ -169,7 +161,7 @@ const getStudentDashboard = async (req, res) => {
 
   } catch (err) {
     console.error('getStudentDashboard error:', err);
-    return res.status(500).json({ message: 'Internal error', error: err.message });
+    return res.status(500).json({ message: 'Internal error', code: 'STUDENT_DATA_UNAVAILABLE' });
   }
 };
 
@@ -186,6 +178,7 @@ const getMyGroup = async (req, res) => {
         model:    Group,
         as:       'group',
         required: false,
+        where: {isActive:{[Op.not]:false}},
         attributes: ['id', 'name', 'description', 'subject', 'gradeLevel', 'joinCode'],
         include: [{
           model:      User,
@@ -217,7 +210,7 @@ const getMyGroup = async (req, res) => {
 
   } catch (err) {
     console.error('getMyGroup error:', err);
-    return res.status(500).json({ message: 'Internal error', error: err.message });
+    return res.status(500).json({ message: 'Internal error', code: 'STUDENT_DATA_UNAVAILABLE' });
   }
 };
 
@@ -270,8 +263,8 @@ const getMyAssignments = async (req, res) => {
 
   } catch (err) {
     console.error('getMyAssignments error:', err);
-    return res.status(500).json({ message: 'Internal error', error: err.message });
+    return res.status(500).json({ message: 'Internal error', code: 'STUDENT_DATA_UNAVAILABLE' });
   }
 };
 
-module.exports = { getStudentDashboard, getMyGroup, getMyAssignments };
+module.exports = { getStudentDashboard, getMyGroup, getMyAssignments, getAcademicHistory: async(req,res) => {try {res.json({success:true,data:await require('../services/academic.service').history(req.user.id)});}catch {res.status(503).json({success:false,message:'Could not load academic history.'});}} };

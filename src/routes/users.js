@@ -11,19 +11,7 @@ router.use(auth);
 // Get all users (Admin only)
 router.get('/', roleCheck('admin', 'teacher'), async (req, res) => {
   try {
-    const { role } = req.query;
-    const where = {};
-    
-    if (role) where.role = role;
-    if (req.user.role === 'teacher') {
-      where.role = 'student';
-      const groups = await Group.findAll({ where: { teacherId: req.user.id }, attributes: ['id'] });
-      const memberships = await GroupMember.findAll({
-        where: { groupId: { [Op.in]: groups.map(g => g.id) } },
-        attributes: ['studentId']
-      });
-      where.id = { [Op.in]: memberships.map(m => m.studentId) };
-    }
+    const where = req.user.role === 'teacher' ? await require('../services/access.service').rosterWhere(req.user) : (req.query.role ? {role:req.query.role} : {});
 
     const users = await User.findAll({
       where,

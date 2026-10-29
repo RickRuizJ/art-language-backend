@@ -1,6 +1,4 @@
 {
-  "dependencies": {
-    "cloudinary": "^1.41.0",
-    "winston": "^3.11.0"
-  }
+  "note": "Reference only. package.json and package-lock.json are the authoritative dependency manifests.",
+  "dependencies": {"cloudinary": "^2.9.0", "winston": "^3.19.0"}
 }

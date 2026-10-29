@@ -8,6 +8,7 @@ const http=require('http'),fs=require('fs'),path=require('path'),db=require('../
  const teacher=await m.User.create({email:'teacher@e2e.test',password:'testPassword1',firstName:'Teacher',lastName:'Test',role:'teacher'});
  const student=await m.User.create({email:'student@e2e.test',password:'testPassword1',firstName:'Student',lastName:'Test',role:'student'});
  const group=await m.Group.create({name:'E2E class',teacherId:teacher.id});await m.GroupMember.create({groupId:group.id,studentId:student.id});
+ if(process.env.E2E_RESET_TOKEN)await m.PasswordReset.create({userId:student.id,tokenHash:require('crypto').createHash('sha256').update(process.env.E2E_RESET_TOKEN).digest('hex'),expiresAt:new Date(Date.now()+1800000)});
  const fixture=fs.readFileSync(path.join(__dirname,'../tests/fixtures/worksheet.pdf'));
  cloud.uploader.upload_stream=(o,cb)=>({end:()=>cb(null,{secure_url:'http://localhost:5000/fixture.pdf',public_id:o.public_id})});
  const app=require('../src/app');

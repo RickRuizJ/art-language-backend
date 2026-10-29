@@ -35,7 +35,7 @@ const CTE=`WITH membership AS (
  AND (CAST(:to AS date) IS NULL OR s.submitted_at<((CAST(:to AS date)+INTERVAL '1 day') AT TIME ZONE 'UTC'))
 ), latest AS (SELECT * FROM ranked WHERE rank=1), data AS (
  SELECT c.*,s.id AS submission_id,s.status,s.score,s.max_score,s.time_spent_seconds,s.submitted_at,s.attempt_count,
- CASE WHEN s.status IN ('graded','reviewed') AND s.max_score>0 THEN s.score*100.0/s.max_score ELSE NULL END AS percentage,
+ CASE WHEN s.status IN ('graded','reviewed') AND s.max_score>0 AND (COALESCE(s.grading_snapshot->>'feedbackMode','score')<>'after_review' OR s.status='reviewed') THEN s.score*100.0/s.max_score ELSE NULL END AS percentage,
  CASE WHEN EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(s.answers,'[]')) v WHERE v->>'requiresManualReview'='true')
  OR (s.status IN ('pending','submitted') AND s.max_score>0) OR (s.grading_snapshot->>'feedbackMode'='after_review' AND s.status<>'reviewed') THEN 1 ELSE 0 END AS needs_review
  FROM cohort c LEFT JOIN latest s ON s.student_id=c.student_id AND s.worksheet_id=c.worksheet_id
@@ -47,7 +47,7 @@ const METRICS=`COUNT(*)::int AS assigned,COUNT(submission_id)::int AS completed,
  COALESCE(SUM(attempt_count),0)::int AS attempts,MAX(submitted_at) AS "lastActivity"`;
 const queries={
  students:`SELECT student_id AS id,student_name AS name,${METRICS} FROM data GROUP BY student_id,student_name`,
- worksheets:`SELECT worksheet_id AS id,worksheet_title AS name,${METRICS} FROM data GROUP BY worksheet_id,worksheet_title`,
+ worksheets:`SELECT worksheet_id AS id,worksheet_title AS name,'automatic' AS source,${METRICS} FROM data GROUP BY worksheet_id,worksheet_title`,
  groups:`SELECT g.group_id AS id,g.group_name AS name,${METRICS} FROM group_cohort g JOIN data d ON d.student_id=g.student_id AND d.worksheet_id=g.worksheet_id GROUP BY g.group_id,g.group_name`,
  questions:`SELECT s.worksheet_id AS "worksheetId",w.title AS "worksheetTitle",answer->>'questionId' AS id,
  COALESCE(MAX(q->>'text'),MAX(q->>'question'),'Question') AS name,
@@ -69,7 +69,15 @@ exports.getAnalytics=async(req,res)=>{
   // Empty page after a filter has no window row; report count separately only in that case.
   let total=rows[0]?.totalRows||0;
   if(!rows.length&&page>1)total=Number((await db.query(`${CTE} SELECT COUNT(*)::int AS n FROM (${query}) report`,{replacements:p,type:QueryTypes.SELECT}))[0].n);
-  res.json({success:true,data:{summary,rows:rows.map(({totalRows,...r})=>({...r,...(view==='students'?{needsAttention:(r.averageScore!=null&&r.averageScore<70)||(r.assigned-r.completed>=3)}:{})})),total,page,pages:Math.max(1,Math.ceil(total/limit)),rule:'latest_attempt_in_date_range',attentionRule:'Average below 70% or at least 3 incomplete assignments in this view.'}});
+  const manualSummary=(await db.query(`SELECT COUNT(*)::int AS count,ROUND(AVG(mg.score*100.0/mg.max_score),1)::float AS "averageScore"
+    FROM manual_grades mg JOIN groups g ON g.id=mg.group_id JOIN manual_activities ma ON ma.id=mg.activity_id LEFT JOIN assignments a ON a.id=ma.assignment_id
+    WHERE mg.is_active=true AND (:admin OR g.teacher_id=:teacherId)
+    AND (CAST(:groupId AS uuid) IS NULL OR mg.group_id=CAST(:groupId AS uuid))
+    AND (CAST(:studentId AS uuid) IS NULL OR mg.student_id=CAST(:studentId AS uuid))
+    AND (CAST(:worksheetId AS uuid) IS NULL OR a.worksheet_id=CAST(:worksheetId AS uuid))
+    AND (CAST(:from AS date) IS NULL OR mg.activity_date>=CAST(:from AS date))
+    AND (CAST(:to AS date) IS NULL OR mg.activity_date<=CAST(:to AS date))`,{replacements:p,type:QueryTypes.SELECT}))[0];
+  res.json({success:true,data:{summary,manualSummary,gradingPolicy:'automatic_only',rows:rows.map(({totalRows,...r})=>({...r,...(view==='students'?{needsAttention:(r.averageScore!=null&&r.averageScore<70)||(r.assigned-r.completed>=3)}:{})})),total,page,pages:Math.max(1,Math.ceil(total/limit)),rule:'latest_attempt_in_date_range',attentionRule:'Average below 70% or at least 3 incomplete assignments in this view.'}});
  }catch(e){console.error('Analytics:',e.message);res.status(e.status||500).json({success:false,message:e.status?e.message:'Could not load analytics.'});}
 };
 exports.getOptions=async(req,res)=>{

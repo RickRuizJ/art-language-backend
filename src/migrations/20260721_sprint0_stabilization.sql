@@ -16,21 +16,15 @@ ALTER TABLE submissions
 
 -- Backfill robusto: si producción ya tenía más de una entrega para el mismo
 -- alumno/worksheet antes de instalar esta migración, ADD COLUMN asigna 1 a
--- todas. Renumeramos de forma determinista ANTES de crear el UNIQUE para que
--- el primer deploy no falle a mitad de la migración.
-WITH ranked AS (
-  SELECT id,
-         ROW_NUMBER() OVER (
-           PARTITION BY worksheet_id, student_id
-           ORDER BY submitted_at ASC NULLS LAST, id
-         ) AS rn
-  FROM submissions
-)
-UPDATE submissions s
-SET attempt_number = ranked.rn
-FROM ranked
-WHERE s.id = ranked.id
-  AND s.attempt_number IS DISTINCT FROM ranked.rn;
+-- todas. Los números ambiguos bloquean la migración y se revisan en staging;
+-- nunca se renumeran automáticamente las entregas existentes.
+-- Preserve all existing attempt numbers. Ambiguous legacy attempts require review on a staging copy.
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM submissions WHERE attempt_number IS NULL OR attempt_number<1)
+ OR EXISTS(SELECT 1 FROM submissions GROUP BY worksheet_id,student_id,attempt_number HAVING count(*)>1) THEN
+  RAISE EXCEPTION 'Submission attempt numbers require staging review; no submissions were renumbered.';
+ END IF;
+END $$;
 
 -- Constraint: un alumno no puede tener dos submissions con el mismo número
 -- de intento para el mismo worksheet.

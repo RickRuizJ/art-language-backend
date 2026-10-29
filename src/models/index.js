@@ -92,5 +92,10 @@ module.exports = {
   FileUpload,
   Submission,
   Assignment,
-  Message
+  Message,
+  AuditEvent: require('./AuditEvent'),
+  EmailJob: require('./EmailJob'),
+  ManualActivity: require('./ManualActivity'),
+  PasswordReset: require('./PasswordReset'),
+  ManualGrade: require('./ManualGrade')
 };

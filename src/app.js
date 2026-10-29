@@ -16,7 +16,8 @@ const cors         = require('cors');
 const helmet       = require('helmet');
 const morgan       = require('morgan');
 const compression  = require('compression');
-const rateLimit    = require('express-rate-limit');
+const {limit, account} = require('./middleware/securityLimits');
+const readiness = require('./config/readiness');
 const errorHandler = require('./middleware/errorHandler');
 const sequelize    = require('./config/database');
 
@@ -37,7 +38,7 @@ const app = express();
 
 // Detrás de Render/Vercel todas las peticiones llegan con la IP del proxy: sin esto
 // el límite de peticiones se compartía entre TODOS los usuarios.
-app.set('trust proxy', 1);
+app.set('trust proxy', process.env.TRUST_PROXY_HOPS ? Number(process.env.TRUST_PROXY_HOPS) : false);
 
 // ─── Security ─────────────────────────────────────────────────────────────────
 app.use(helmet({
@@ -53,13 +54,13 @@ const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:3001',
   ...(process.env.CORS_ORIGINS || '').split(',').map(v => v.trim()).filter(Boolean),
-].filter(Boolean);
+].filter(Boolean).map(value=>{try{return new URL(value).origin;}catch{return null;}}).filter(Boolean);
 
 const corsOptions = {
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(new Error(`CORS: origin ${origin} not allowed`));
+    return callback(Object.assign(new Error('Origin not allowed'),{status:403}));
   },
   credentials: true,
   optionsSuccessStatus: 200,
@@ -67,29 +68,19 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// ─── Rate limiting ────────────────────────────────────────────────────────────
-const limitMessage = { success: false, message: 'Demasiadas solicitudes. Espera unos minutos e inténtalo de nuevo.' };
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: parseInt(process.env.RATE_LIMIT_MAX || '1000', 10), // un salón completo puede compartir IP
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: limitMessage
-});
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: parseInt(process.env.AUTH_RATE_LIMIT_MAX || '40', 10),
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: limitMessage
-});
-app.use('/api/auth/login', authLimiter);
-app.use('/api/auth/register', authLimiter);
-app.use('/api/', limiter);
-
-// ─── Body parsers ─────────────────────────────────────────────────────────────
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// Reject unavailable services and IP floods before parsing request bodies.
+app.use('/api',async(req,res,next)=>{if(!await readiness.check())return res.status(503).json({success:false,message:'Service is not ready. Required database migrations must complete.'});next();});
+app.use('/api',limit('api-ip',{max:Number(process.env.RATE_LIMIT_MAX||6000)}));
+app.use('/api/auth',express.json({limit:'16kb'}),express.urlencoded({extended:false,limit:'16kb'}));
+app.use(express.json({limit:'10mb'}));
+app.use(express.urlencoded({extended:false,limit:'10mb'}));
+for(const operation of ['login','register','forgot-password','reset-password','change-password']){
+ app.use(`/api/auth/${operation}`,limit(`auth-ip:${operation}`,{max:Number(process.env.AUTH_RATE_LIMIT_MAX||40)}));
+}
+app.use('/api/auth/login',account('login',Number(process.env.LOGIN_ACCOUNT_MAX||10)));
+app.use('/api/auth/register',account('register',10));
+app.use('/api/auth/forgot-password',account('forgot',10,3600000));
+app.use('/api/auth/reset-password',limit('reset-token',{max:10,key:req=>req.body?.token||req.ip}));
 
 // ─── Misc middleware ──────────────────────────────────────────────────────────
 app.use(compression());
@@ -119,20 +110,23 @@ app.get('/health', async (req, res) => {
     database: await dbStatus(),
     uploads: uploadsStatus(),
     timestamp: new Date().toISOString(),
+    recovery: require('./services/recovery.service').configured() ? 'configured' : 'missing_configuration',
     environment: process.env.NODE_ENV
   });
 });
 
 // Readiness: 503 si la base de datos no responde.
-app.get('/health/ready', async (req, res) => {
-  const database = await dbStatus();
-  res.status(database === 'connected' ? 200 : 503).json({ status: database === 'connected' ? 'READY' : 'NOT_READY', database });
+app.get('/health/ready',async(req,res)=>{
+ const ready=await readiness.check(true);
+ res.status(ready?200:503).json({status:ready?'READY':'NOT_READY',databaseSchema:ready?'current':'unavailable_or_migration_failed'});
 });
 
 // ─── API Routes ───────────────────────────────────────────────────────────────
 app.use('/api/auth',        authRoutes);
 app.use('/api/users',       userRoutes);
+app.use('/api/manage-students', require('./routes/studentManagement'));
 app.use('/api/analytics', require('./routes/analytics'));
+app.use('/api/manual-grades', require('./routes/manualGrades'));
 app.use('/api/worksheets',  worksheetRoutes);
 app.use('/api/groups',      groupRoutes);
 app.use('/api/submissions', submissionRoutes);
@@ -147,7 +141,7 @@ app.use('/api/messages',     messageRoutes);
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-    message: `Route not found: ${req.method} ${req.originalUrl}`
+    message: 'Route not found.'
   });
 });
 
