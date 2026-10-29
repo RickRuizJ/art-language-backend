@@ -3,11 +3,11 @@ const crypto = require('crypto');
 const { Op } = require('sequelize');
 const db = require('../config/database');
 const { User, PasswordReset, EmailJob } = require('../models');
-const { sendResetEmail } = require('./email.service');
+const { sendResetEmail, isConfigured } = require('./email.service');
 const { record } = require('./audit.service');
 const { consume } = require('../middleware/securityLimits');
 exports.configured = () => {
- if(!process.env.RESEND_API_KEY||!process.env.EMAIL_FROM||!process.env.FRONTEND_URL)return false;
+ if(!isConfigured()||!process.env.FRONTEND_URL)return false;
  try{const url=new URL(process.env.FRONTEND_URL);return !url.username&&!url.password&&url.pathname==='/'&&!url.search&&!url.hash&&(url.protocol==='https:'||(process.env.NODE_ENV!=='production'&&['localhost','127.0.0.1'].includes(url.hostname)&&url.protocol==='http:'));}catch{return false;}
 };
 exports.enqueue = async (email, actorId = null) => {
