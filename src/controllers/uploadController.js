@@ -50,10 +50,10 @@ const upload = multer({
     if (resolveMime(file)) {
       cb(null, true);
     } else {
-      cb(new Error('File type not supported. Allowed: PDF, Word, Excel, PowerPoint, TXT, CSV, MP3, MP4, PNG, JPG, GIF, WEBP'), false);
+      cb(Object.assign(new Error('File type not supported.'),{status:400}), false);
     }
   },
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 30, fieldNameSize: 100, fieldSize: 65536, parts: 31, fieldArrayIndexLimit: 100, fieldNestingDepth: 5 }, // 10 MB
 });
 
 // ─── SPRINT 0 FIX ───────────────────────────────────────────────────────────
@@ -217,11 +217,7 @@ exports.uploadWorksheet = [
         },
       });
     } catch (error) {
-      logger.error('[UPLOAD ERROR] Full error:', error);
-      logger.error(`[UPLOAD ERROR] Name: ${error.name}`);
-      logger.error(`[UPLOAD ERROR] Message: ${error.message}`);
-      if (error.stack) logger.error(`[UPLOAD ERROR] Stack: ${error.stack}`);
-      if (error.parent) logger.error('[UPLOAD ERROR] DB error:', error.parent);
+      logger.error(`[UPLOAD ERROR] ${error.name || 'UploadFailure'}`);
       
       if (error.message && error.message.includes('File type not supported')) {
         return res.status(400).json({ success: false, message: error.message });
@@ -292,7 +288,7 @@ exports.saveExternalLink = async (req, res) => {
       data: { worksheet: worksheet.toJSON(), workbookId: finalWorkbookId }
     });
   } catch (error) {
-    logger.error('[EXTERNAL LINK ERROR]', error);
+    logger.error('[EXTERNAL LINK ERROR] Resource could not be saved.');
     if (error.message?.includes('Workbook not found')) return res.status(404).json({ success: false, message: error.message });
     return res.status(500).json({ success: false, message: 'Failed to save link' });
   }
@@ -348,7 +344,7 @@ exports.getWorksheetFile = async (req, res) => {
       },
     });
   } catch (error) {
-    logger.error('Get file error:', error);
+    logger.error('File retrieval failed.');
     res.status(500).json({ success: false, message: 'Failed to fetch file' });
   }
 };

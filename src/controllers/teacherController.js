@@ -68,7 +68,7 @@ const getMyStudents = async (req, res) => {
     return res.status(200).json({ success: true, groups: result });
   } catch (err) {
     console.error('getMyStudents error:', err);
-    return res.status(500).json({ success: false, message: 'Internal error', error: err.message });
+    return res.status(500).json({ success: false, message: 'Internal error', code: 'TEACHER_DATA_UNAVAILABLE' });
   }
 };
 
@@ -76,111 +76,19 @@ const getMyStudents = async (req, res) => {
  * GET /api/teachers/students/:studentId/profile
  * Full student profile with assignment progress.
  */
-const getStudentProfile = async (req, res) => {
-  try {
-    const teacherId  = req.user.id;
-    const { studentId } = req.params;
-
-    // 1. Verify this student belongs to one of this teacher's groups
-    const teacherGroupIds = (await Group.findAll({
-      where: { teacherId },
-      attributes: ['id']
-    })).map(g => g.id);
-
-    if (teacherGroupIds.length === 0) {
-      return res.status(404).json({ success: false, message: 'No groups found for this teacher.' });
-    }
-
-    const membership = await GroupMember.findOne({
-      where: {
-        studentId,
-        groupId: { [Op.in]: teacherGroupIds }
-      },
-      include: [{
-        model: Group,
-        as: 'group',
-        attributes: ['id', 'name', 'subject']
-      }]
-    });
-
-    if (!membership) {
-      return res.status(404).json({ success: false, message: 'Student not found or not your student.' });
-    }
-
-    // 2. Load student base info
-    const student = await User.findByPk(studentId, {
-      attributes: ['id', 'firstName', 'lastName', 'email', 'avatarUrl', 'groupId', 'created_at']
-    });
-
-    if (!student) {
-      return res.status(404).json({ success: false, message: 'Student not found.' });
-    }
-
-    const groupId = membership.groupId;
-
-    // 3. Assignments for the group
-    const assignments = await Assignment.findAll({
-      where: { groupId, isActive: true },
-      include: [
-        { model: Worksheet, as: 'worksheet', attributes: ['id', 'title'] }
-      ],
-      order: [['created_at', 'DESC']]
-    });
-
-    // 4. Student submissions
-    const submissions = await Submission.findAll({
-      where: { studentId },
-      attributes: ['id', 'worksheetId', 'status', 'score', 'maxScore', 'submittedAt', 'gradedAt'],
-      order: [['submittedAt', 'DESC']]
-    });
-
-    const subMap = {};
-    submissions.forEach(s => {
-      const current = subMap[s.worksheetId];
-      if (!current || new Date(s.submittedAt) > new Date(current.submittedAt)) subMap[s.worksheetId] = s;
-    });
-
-    const assignmentsWithStatus = assignments.map(a => ({
-      ...a.toJSON(),
-      submission:       subMap[a.worksheetId] || null,
-      submissionStatus: subMap[a.worksheetId]?.status || 'pending'
-    }));
-
-    // 5. Compute progress by assignment, not by raw attempt count. Multiple
-    // attempts for one worksheet must never make pendingAssignments negative.
-    const assignedWorksheetIds = new Set(assignments.map(a => a.worksheetId));
-    const latestAssignedSubs = Object.values(subMap).filter(s => assignedWorksheetIds.has(s.worksheetId));
-    const completed = latestAssignedSubs.filter(s => ['submitted', 'graded', 'reviewed'].includes(s.status));
-    const graded = latestAssignedSubs.filter(s => ['graded', 'reviewed'].includes(s.status) && s.score !== null);
-
-    let avgScore = null;
-    if (graded.length > 0) {
-      const sum = graded.reduce((acc, s) => acc + (s.maxScore > 0 ? (s.score / s.maxScore) * 100 : 0), 0);
-      avgScore = Math.round(sum / graded.length);
-    }
-
-    return res.status(200).json({
-      success: true,
-      student: {
-        ...student.toJSON(),
-        group: membership.group
-      },
-      progress: {
-        totalAssignments:     assignments.length,
-        completedAssignments: completed.length,
-        pendingAssignments:   Math.max(0, assignments.length - completed.length),
-        completionRate: assignments.length > 0
-          ? Math.round((completed.length / assignments.length) * 100)
-          : 0,
-        avgScore
-      },
-      assignments:       assignmentsWithStatus,
-      recentSubmissions: submissions.slice(0, 5)
-    });
-  } catch (err) {
-    console.error('getStudentProfile error:', err);
-    return res.status(500).json({ success: false, message: 'Internal error', error: err.message });
-  }
+const getStudentProfile = async (req,res) => {
+ try {
+  const access=require('../services/access.service'),academic=require('../services/academic.service');
+  const student=await access.studentAccess(req.user,req.params.studentId);
+  if(!student)return res.status(404).json({success:false,message:'Student not found in your authorized scope.'});
+  const ids=await access.groupIds(student.id,student.groupId);
+  const groups=await Group.findAll({where:{id:{[Op.in]:ids},...access.groupScope(req.user)},attributes:['id','name']});
+  const assignments=await Assignment.findAll({where:{groupId:{[Op.in]:groups.map(g=>g.id)},isActive:true},include:[{model:Worksheet,as:'worksheet',attributes:['id','title'],...(req.user.role==='admin'?{}:{where:{createdBy:req.user.id},required:true})}]});
+  const history=await academic.history(student.id,req.user.role==='admin'?{}:{teacherId:req.user.id,groupIds:groups.map(g=>g.id)});
+  const submissions=await Submission.findAll({where:{studentId:student.id},include:[{model:Worksheet,as:'worksheet',attributes:['id','title'],...(req.user.role==='admin'?{}:{where:{createdBy:req.user.id},required:true})}],order:[['attemptNumber','DESC'],['submittedAt','DESC']]});
+  const stats=academic.automaticStats(assignments,submissions);
+  return res.json({success:true,student:{id:student.id,firstName:student.firstName,lastName:student.lastName,email:student.email,isActive:student.isActive,created_at:student.created_at,groups},progress:{totalAssignments:stats.total,completedAssignments:stats.completed,pendingAssignments:stats.pending,avgScore:stats.avgScore,completionRate:stats.total?Math.round(stats.completed*100/stats.total):0},assignments,recentSubmissions:history.automatic.slice(0,5),academicHistory:history});
+ } catch {return res.status(503).json({success:false,message:'Could not load authorized student profile.'});}
 };
 
 module.exports = { getMyStudents, getStudentProfile };
@@ -190,7 +98,7 @@ module.exports = { getMyStudents, getStudentProfile };
 const getDashboardStats = async (req, res) => {
   try {
     const groups = await Group.findAll({
-      where: req.user.role === 'admin' ? {} : { teacherId: req.user.id },
+      where: { ...(req.user.role === 'admin' ? {} : { teacherId: req.user.id }), isActive: {[Op.not]:false} },
       attributes: ['id'],
       include: [{ model: GroupMember, as: 'members', attributes: ['studentId'] }]
     });

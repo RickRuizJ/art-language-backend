@@ -1,44 +1,17 @@
-const { Sequelize } = require('sequelize');
-
-// Database configuration with SSL support for Render
-const isProduction = process.env.NODE_ENV === 'production';
-
-// Parse DATABASE_URL or use default
-const databaseUrl = process.env.DATABASE_URL || 'postgresql://localhost:5432/artlanguage';
-
-// Neon y Render exigen SSL. Antes sólo se activaba con NODE_ENV=production, así
-// que un despliegue sin esa variable no podía conectarse a Neon.
-const needsSsl = isProduction || /sslmode=require|neon\.tech|render\.com/i.test(databaseUrl);
-
-const sequelize = new Sequelize(databaseUrl, {
-  dialect: 'postgres',
-  
-  // Logging: verbose in development, silent in production
-  logging: process.env.NODE_ENV === 'development' ? console.log : false,
-  
-  // SSL configuration for production (Render, Heroku, etc.)
-  dialectOptions: needsSsl ? {
-    ssl: {
-      require: true,
-      rejectUnauthorized: false
-    }
-  } : {},
-  
-  // Connection pool settings
-  pool: {
-    max: 5,
-    min: 0,
-    acquire: 30000,
-    idle: 10000
-  },
-  
-  // Model defaults
-  define: {
-    timestamps: true,
-    underscored: true,
-    createdAt: 'created_at',
-    updatedAt: 'updated_at'
-  }
+'use strict';
+const {Sequelize}=require('sequelize');
+const fs=require('fs');
+const raw=process.env.DATABASE_URL||'postgresql://localhost:5432/artlanguage';
+let url;try{url=new URL(raw);if(!['postgres:','postgresql:'].includes(url.protocol))throw new Error();}catch{throw new Error('DATABASE_URL must be a valid PostgreSQL connection URL.');}
+const production=process.env.NODE_ENV==='production';
+const sslRequested=production||process.env.DATABASE_SSL_MODE==='verify-full'||/require|verify/.test(url.searchParams.get('sslmode')||'')||/neon\.tech|render\.com/i.test(url.hostname);
+if(production&&process.env.DATABASE_SSL_MODE==='disable')throw new Error('Production database TLS certificate validation is required.');
+// pg connection-string ssl flags must not silently override certificate validation.
+for(const key of ['sslmode','ssl','sslcert','sslkey','sslrootcert','sslpassword'])url.searchParams.delete(key);
+const ca=process.env.DATABASE_SSL_CA|| (process.env.DATABASE_SSL_CA_FILE?fs.readFileSync(process.env.DATABASE_SSL_CA_FILE,'utf8'):undefined);
+module.exports=new Sequelize(url.toString(),{
+ dialect:'postgres',logging:false,
+ dialectOptions:sslRequested?{ssl:{rejectUnauthorized:true,...(ca?{ca}:{})},connectionTimeoutMillis:10000}:{connectionTimeoutMillis:10000},
+ pool:{max:8,min:0,acquire:15000,idle:10000},
+ define:{timestamps:true,underscored:true,createdAt:'created_at',updatedAt:'updated_at'}
 });
-
-module.exports = sequelize;

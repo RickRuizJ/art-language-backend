@@ -1,5 +1,5 @@
 const {Op}=require('sequelize');
-const {Assignment,GroupMember,User}=require('../models');
+const {Assignment,GroupMember,User,Group}=require('../models');
 const MODES=['score','incorrect','answers','full','after_review'];
 const TYPES=['fill_blank','multiple_choice','true_false','matching','essay','short_answer'];
 const fail=(message,status=400)=>Object.assign(new Error(message),{status});
@@ -18,7 +18,7 @@ function publicWorksheet(ws){const plain=ws.toJSON?ws.toJSON():{...ws};plain.que
 async function assigned(studentId,worksheetId,transaction){
  const [members,student]=await Promise.all([GroupMember.findAll({where:{studentId},attributes:['groupId'],transaction}),User.findByPk(studentId,{attributes:['groupId'],transaction})]);
  const ids=[...new Set([...members.map(m=>m.groupId),student?.groupId].filter(Boolean))];
- return ids.length?Assignment.findOne({where:{worksheetId,groupId:{[Op.in]:ids},isActive:{[Op.not]:false}},transaction}):null;
+ return ids.length?Assignment.findOne({where:{worksheetId,groupId:{[Op.in]:ids},isActive:{[Op.not]:false}},include:[{model:Group,as:'group',attributes:[],where:{isActive:{[Op.not]:false}}}],transaction}):null;
 }
 function validateLayout(body,fileId){
  if(!Number.isInteger(body.revision)||body.revision<0)throw fail('Layout revision is required.');

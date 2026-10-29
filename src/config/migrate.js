@@ -1,109 +1,33 @@
 'use strict';
-
-/**
- * Lightweight migration runner for the migrations shipped in this repository.
- * It records successfully applied filenames in schema_migrations and skips them
- * on later deploys. Existing migrations are written to be safe on an already
- * partially-migrated production database.
- */
-
 require('dotenv').config();
-const fs = require('fs');
-const path = require('path');
-const sequelize = require('./database');
-
-const migrationsDir = path.join(__dirname, '..', 'migrations');
-
-async function ensureMigrationsTable() {
-  await sequelize.query(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      filename VARCHAR(255) PRIMARY KEY,
-      applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
-}
-
-async function isApplied(filename) {
-  const [rows] = await sequelize.query(
-    'SELECT filename FROM schema_migrations WHERE filename = :filename LIMIT 1',
-    { replacements: { filename } }
-  );
-  return rows.length > 0;
-}
-
-async function markApplied(filename) {
-  await sequelize.query(
-    `INSERT INTO schema_migrations (filename) VALUES (:filename)
-     ON CONFLICT (filename) DO NOTHING`,
-    { replacements: { filename } }
-  );
-}
-
-async function runMigration(filename) {
-  const fullPath = path.join(migrationsDir, filename);
-  const ext = path.extname(filename).toLowerCase();
-
-  console.log(`→ ${filename}`);
-
-  if (ext === '.sql') {
-    const sql = fs.readFileSync(fullPath, 'utf8');
-    await sequelize.query(sql);
-    return;
+const fs=require('fs'),path=require('path'),db=require('./database');
+const directory=path.join(__dirname,'..','migrations');
+const files=()=>fs.readdirSync(directory).filter(n=>/\.(sql|js)$/.test(n)).sort();
+async function runMigrations(){
+ await db.authenticate();
+ const connection=await db.connectionManager.getConnection();
+ try{
+  await connection.query('SELECT pg_advisory_lock(1945012026)');
+  await db.query('CREATE TABLE IF NOT EXISTS schema_migrations(filename varchar(255) PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT now())');
+  for(const filename of files()){
+   const [applied]=await db.query('SELECT filename FROM schema_migrations WHERE filename=:filename',{replacements:{filename}});
+   if(applied.length){console.log(`Already applied: ${filename}`);continue;}
+   const file=path.join(directory,filename);
+   console.log(`Applying: ${filename}`);
+   if(filename.endsWith('.sql')){
+    const sql=fs.readFileSync(file,'utf8').replace(/^\s*(BEGIN|COMMIT);\s*$/gm,'');
+    await db.transaction(async transaction=>{
+     await db.query(sql,{transaction});
+     await db.query('INSERT INTO schema_migrations(filename) VALUES(:filename)',{replacements:{filename},transaction});
+    });
+   }else{
+    // The legacy JS migration is additive and re-entrant; its own queries predate transaction options.
+    await require(file).up(db.getQueryInterface(),require('sequelize'));
+    await db.query('INSERT INTO schema_migrations(filename) VALUES(:filename)',{replacements:{filename}});
+   }
+   console.log(`Applied: ${filename}`);
   }
-
-  if (ext === '.js') {
-    const migration = require(fullPath);
-    if (!migration || typeof migration.up !== 'function') {
-      throw new Error(`${filename} does not export an up() migration function`);
-    }
-    await migration.up(sequelize.getQueryInterface(), require('sequelize'));
-    return;
-  }
-
-  throw new Error(`Unsupported migration type: ${filename}`);
+ }finally{try{await connection.query('SELECT pg_advisory_unlock(1945012026)');}finally{await db.connectionManager.releaseConnection(connection);}}
 }
-
-/**
- * Aplica las migraciones pendientes. No cierra la conexión ni termina el
- * proceso, así que también se puede llamar al arrancar el servidor.
- */
-async function runMigrations() {
-  await sequelize.authenticate();
-  await ensureMigrationsTable();
-
-  const files = fs.readdirSync(migrationsDir)
-    .filter(name => name.endsWith('.sql') || name.endsWith('.js'))
-    .sort();
-
-  for (const filename of files) {
-    if (await isApplied(filename)) {
-      console.log(`✓ ${filename} already applied`);
-      continue;
-    }
-
-    await runMigration(filename);
-    await markApplied(filename);
-    console.log(`✓ ${filename} applied`);
-  }
-
-  console.log('All repository migrations are up to date.');
-}
-
-async function main() {
-  try {
-    await runMigrations();
-    await sequelize.close();
-    process.exit(0);
-  } catch (error) {
-    console.error('Migration failed:', error.message);
-    if (process.env.NODE_ENV !== 'production') console.error(error.stack);
-    try { await sequelize.close(); } catch (_) {}
-    process.exit(1);
-  }
-}
-
-if (require.main === module) {
-  main();
-}
-
-module.exports = { runMigrations };
+if(require.main===module)runMigrations().then(()=>db.close()).catch(async error=>{console.error('Migration failed. Database category:',error.original?.code || error.name,'No destructive synchronization was attempted. Review the schema in staging.');await db.close();process.exitCode=1;});
+module.exports={runMigrations,files};

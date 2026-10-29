@@ -1,5 +1,7 @@
 require('dotenv').config();
+if(process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32)) { console.error('Configure a strong JWT_SECRET before starting production.'); process.exit(1); }
 const app = require('./app');
+const readiness = require('./config/readiness');
 const sequelize = require('./config/database');
 const PORT = process.env.PORT || 5000;
 
@@ -40,17 +42,22 @@ async function connectDatabase(attempt = 1) {
     await sequelize.authenticate();
     console.log('✅ Database connected successfully');
 
-    // Las migraciones del repositorio son idempotentes (IF NOT EXISTS) y quedan
+    // Las migraciones del repositorio son aditivas y quedan
     // registradas en schema_migrations. Correrlas al arrancar evita que falten
     // tablas como file_uploads o messages tras un despliegue. Para desactivarlo:
-    // AUTO_MIGRATE=false.
-    if (process.env.AUTO_MIGRATE !== 'false') {
+    // AUTO_MIGRATE=true enables this explicitly; default is a separate migration step.
+    if (process.env.AUTO_MIGRATE === 'true') {
       try {
         await require('./config/migrate').runMigrations();
       } catch (migrationError) {
-        console.error(`❌ Las migraciones fallaron: ${migrationError.message}`);
+        readiness.failed();
+        console.error('Database migration failed; readiness remains disabled.');
+        return;
       }
     }
+    readiness.reset();
+    if (!await readiness.check(true)) { readiness.failed(); console.error('Required database schema is unavailable; run migrations before enabling traffic.'); return; }
+    require('./services/recovery.service').startWorker();
   } catch (error) {
     console.error(`❌ Database connection failed (attempt ${attempt}/${maxAttempts}): ${error.message}`);
     if (attempt < maxAttempts) {

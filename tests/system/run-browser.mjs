@@ -7,6 +7,8 @@ import {mkdirSync,existsSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 import {browserFlow} from './browser-flow.mjs';
+import {securityBrowserFlow} from './security-browser.mjs';
+import {randomBytes} from 'node:crypto';
 const backend=fileURLToPath(new URL('../../',import.meta.url));
 const frontend=path.resolve(process.env.FRONTEND_DIR||path.join(backend,'../art-language-frontend'));
 if(!existsSync(path.join(frontend,'.next/BUILD_ID')))throw Error('Build frontend with NEXT_PUBLIC_API_URL=http://localhost:5000/api and set FRONTEND_DIR to its absolute path.');
@@ -15,6 +17,7 @@ const db=await PGlite.create({extensions:{pg_trgm,pgcrypto}});
 const socket=new PGLiteSocketServer({db,port:55435,host:'127.0.0.1',maxConnections:20});
 await socket.start();
 let api,web,code=0;
+const registrationSecret=randomBytes(24).toString('hex'),resetToken=randomBytes(32).toString('hex');
 function ready(child,pattern){return new Promise((resolve,reject)=>{
  const timer=setTimeout(()=>reject(Error('Test service did not start in 45 seconds.')),45000);
  child.stderr.pipe(process.stderr);
@@ -23,10 +26,11 @@ function ready(child,pattern){return new Promise((resolve,reject)=>{
  child.on('exit',n=>{clearTimeout(timer);reject(Error(`Test service exited ${n}`));});
 });}
 try{
- api=spawn(process.execPath,['scripts/e2e-server.js'],{cwd:backend,env:{...process.env,TEST_DATABASE_URL:'postgresql://postgres:postgres@127.0.0.1:55435/browser_test'},stdio:['ignore','pipe','pipe']});
+ api=spawn(process.execPath,['scripts/e2e-server.js'],{cwd:backend,env:{...process.env,TEST_DATABASE_URL:'postgresql://postgres:postgres@127.0.0.1:55435/browser_test',TEACHER_REGISTRATION_PASSWORD:registrationSecret,E2E_RESET_TOKEN:resetToken},stdio:['ignore','pipe','pipe']});
  const fixture=JSON.parse(await ready(api,/E2E_READY (.+)/));
- web=spawn(process.execPath,[path.join(frontend,'node_modules/next/dist/bin/next'),'start','-p','3000'],{cwd:frontend,stdio:['ignore','pipe','pipe']});
+ web=spawn(process.execPath,[path.join(frontend,'node_modules/next/dist/bin/next'),'start','-p','3000','-H','127.0.0.1'],{cwd:frontend,stdio:['ignore','pipe','pipe']});
  await ready(web,/Ready in/);
  await browserFlow(fixture);
+ await securityBrowserFlow({...fixture,registrationSecret,resetToken});
 }catch(e){console.error(e);code=1;}
 finally{api?.kill('SIGTERM');web?.kill('SIGTERM');await socket.stop();await db.close();process.exit(code);}

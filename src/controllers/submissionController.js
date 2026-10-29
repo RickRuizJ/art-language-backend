@@ -81,7 +81,7 @@ exports.getStudentSubmissions = async (req, res) => {
         where: { studentId },
         include: [{ model: Group, as: 'group', where: { teacherId: req.user.id }, attributes: ['id'] }]
       });
-      const direct = await User.findOne({ where: { id: studentId, teacherId: req.user.id }, attributes: ['id'] });
+      const direct = await require('../services/access.service').studentAccess(req.user, studentId);
       if (!membership && !direct) return res.status(403).json({ success: false, message: 'Access denied' });
     }
 

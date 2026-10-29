@@ -28,21 +28,14 @@ BEGIN
   END IF;
 END $$;
 
--- If legacy data contains multiple attempts with attempt_number=1, number them
--- deterministically before making the composite key unique.
-WITH ranked AS (
-  SELECT id,
-         ROW_NUMBER() OVER (
-           PARTITION BY worksheet_id, student_id
-           ORDER BY submitted_at ASC NULLS LAST, id
-         ) AS rn
-  FROM submissions
-)
-UPDATE submissions s
-SET attempt_number = ranked.rn
-FROM ranked
-WHERE s.id = ranked.id
-  AND s.attempt_number IS DISTINCT FROM ranked.rn;
+-- Do not renumber existing attempts. Reject ambiguity before adding uniqueness.
+-- Preserve all existing attempt numbers. Ambiguous legacy attempts require review on a staging copy.
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM submissions WHERE attempt_number IS NULL OR attempt_number<1)
+ OR EXISTS(SELECT 1 FROM submissions GROUP BY worksheet_id,student_id,attempt_number HAVING count(*)>1) THEN
+  RAISE EXCEPTION 'Submission attempt numbers require staging review; no submissions were renumbered.';
+ END IF;
+END $$;
 
 ALTER TABLE submissions ALTER COLUMN attempt_number SET DEFAULT 1;
 ALTER TABLE submissions ALTER COLUMN attempt_number SET NOT NULL;

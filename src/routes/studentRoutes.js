@@ -33,5 +33,6 @@ router.get('/group', getMyGroup);
 
 // GET /api/students/assignments
 router.get('/assignments', getMyAssignments);
+router.get('/grades', require('../controllers/studentController').getAcademicHistory);
 
 module.exports = router;

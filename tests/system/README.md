@@ -1,37 +1,27 @@
-# Pruebas aisladas de API y navegador
+# Pruebas aisladas de API, seguridad, arranque y navegador
 
-Estas herramientas son exclusivamente de desarrollo; no se importan al iniciar Render.
-Requieren Node 22 y una terminal con npm. No utilizan tus cuentas ni la base de producción.
-
-## API: regresión y nueva fase
+Requieren Node 24 (probado en 24.22.1), npm y puertos locales libres. No usan cuentas o bases de producción.
 
 Desde la raíz del backend:
 
 ```sh
 npm ci
 npm ci --prefix tests/system
-npm run test:api --prefix tests/system
+npm test -- --runInBand
+npm run test:integration
+npm run test:security
+npm run test:startup
 ```
 
-El runner crea PostgreSQL embebido (PGlite) temporal en memoria, en el puerto local 55433,
-y ejecuta los 34 controles existentes más los 40 de la fase interactiva.
-Cloudinary se simula. Al terminar se elimina la base temporal.
-PGlite no sustituye una prueba de concurrencia contra PostgreSQL/Neon real.
+Los runners crean bases PGlite temporales: puertos 55433, 55436 y 55439. La prueba de arranque además usa 5012. No ejecutar los scripts de integración directamente: requieren un marcador de entorno que solo suministra el runner. El script general heredado borra el esquema **de su propia base efímera**, nunca debe apuntarse a una base útil.
 
-`npm test -- --runInBand` ejecuta las 60 pruebas unitarias y de contratos.
+La prueba de seguridad crea un esquema anterior a las correcciones, datos representativos, membresías duplicadas y notas manuales existentes; después migra y verifica preservación, permisos, recuperación, versiones de sesión, conflictos concurrentes, política automática y exportación. La de arranque comprueba un fallo real de migración por FK y readiness 503.
 
-**No ejecutar `scripts/integration-test.js` con una base que contenga información útil:**
-ese script original elimina el esquema de la base indicada por `TEST_DATABASE_URL`.
-El runner de este directorio le proporciona automáticamente una base temporal aislada.
+PGlite ejecuta SQL PostgreSQL, pero no reemplaza validación de concurrencia, SSL, extensiones y carga sobre PostgreSQL/Neon real. Antes de producción, repetir aceptación en una copia autorizada de la base real y comprobar restauración.
 
-## Navegador: preparado, pendiente de validación
+## Navegador
 
-El flujo automatizado está incluido, pero no pudo ejecutarse en el entorno de entrega:
-Chromium abortó con `socket() failed: Operation not permitted` antes de abrir una página.
-Por tanto, este script todavía puede necesitar ajustes de selectores al ejecutarlo.
-
-1. Instala las dependencias anteriores.
-2. En la raíz del frontend, compila con la API local. En Windows PowerShell:
+1. En la carpeta frontend, instalar dependencias y compilar apuntando a la API local. En PowerShell:
 
 ```powershell
 npm ci
@@ -39,25 +29,21 @@ $env:NEXT_PUBLIC_API_URL='http://localhost:5000/api'
 npm run build
 ```
 
-3. Desde `backend/tests/system`:
+2. En la raíz del backend:
 
-```powershell
-npx playwright install chromium
-$env:FRONTEND_DIR='C:\ruta\completa\al\frontend'
-npm run test:browser
+```sh
+npx --prefix tests/system playwright install chromium
 ```
 
-En macOS/Linux, las variables se asignan con `export NOMBRE=valor`.
-Los puertos 3000, 5000 y 55435 deben estar libres. El script levanta sus propios servicios.
-No apuntes esta prueba al sitio público: se diseñó únicamente para localhost.
+3. Indicar la carpeta frontend y ejecutar. En PowerShell:
 
-Recorrido preparado: login profesor, upload PDF, dibujar Text Answer y Teacher Review,
-configurar puntos, navegar páginas, guardar, publicar, asignar; login alumno con pantalla
-390×844, contestar, guardar, recargar, reanudar, enviar; revisión docente, consulta del
-resultado y Analytics. Capturas en `results/`. No se incluyen credenciales reales.
+```powershell
+$env:FRONTEND_DIR='C:\ruta\al\frontend'
+npm run test:browser --prefix tests/system
+```
 
-Antes de producción, comprobar también manualmente: las cinco herramientas, mover y
-redimensionar, tablet, las cinco políticas de feedback, dos pestañas enviando el mismo
-intento, fallos de red, y el flujo original con Cloudinary real (PDF/DOCX/imagen/audio/video,
-links genéricos y Google, workbooks, mensajes y builder). El archivo `CAMBIOS.md` distingue
-las verificaciones ejecutadas de las pendientes.
+En macOS/Linux: `FRONTEND_DIR=/ruta/al/frontend npm run test:browser --prefix tests/system`.
+
+`E2E_CHROME` permite indicar la ruta de un Chromium ya instalado. La entrega fue verificada con Chromium 141. La versión 134 del viejo runner no soportaba el PDF actual. El runner escucha el frontend en loopback explícito; no expone sus servicios a producción.
+
+Los puertos 3000, 5000 y 55435 deben estar libres. El recorrido incluye PDF completo (crear campos, publicar, asignar, alumno móvil guarda/reanuda/envía, revisión y Analytics) y la interfaz de registro, gestión, contraseña temporal, notas manuales, historial, duplicados, CSV, recuperación y separación de promedios. Resend/Cloudinary son sintéticos; no se envían correos reales. Los resultados y capturas de prueba se generan en results/, excluido de Git y de los ZIP finales.

@@ -1,7 +1,8 @@
+if(process.env.AL_EPHEMERAL_TEST_DB!=='1')throw new Error('Run this test only through the isolated tests/system runner.');
 // Runs only against an isolated test database. Does not create or replace production data.
 const assert=require('node:assert/strict');
 const url=process.env.TEST_DATABASE_URL;
-if(!url||!/\/[^/?]*test[^/?]*(\?|$)/i.test(url))throw Error('TEST_DATABASE_URL must name an isolated test database.');
+if(!url||!/^postgres(?:ql)?:\/\/[^@]+@(127\.0\.0\.1|localhost):\d+\/[^?]*test/i.test(url))throw Error('TEST_DATABASE_URL must name an isolated test database.');
 process.env.DATABASE_URL=url;process.env.NODE_ENV='test';process.env.JWT_SECRET='local-test-only';
 process.env.CLOUDINARY_CLOUD_NAME='test';process.env.CLOUDINARY_API_KEY='test';process.env.CLOUDINARY_API_SECRET='test';
 const request=require('supertest'),m=require('../src/models'),db=require('../src/config/database'),app=require('../src/app');

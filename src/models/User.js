@@ -57,6 +57,11 @@ const User = sequelize.define('User', {
     field: 'avatar_url'
   },
 
+  authVersion: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0, field: 'auth_version' },
+  mustChangePassword: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false, field: 'must_change_password' },
+  temporaryPasswordExpiresAt: { type: DataTypes.DATE, field: 'temporary_password_expires_at' },
+  passwordChangedAt: { type: DataTypes.DATE, field: 'password_changed_at' },
+
   isActive: {
     type: DataTypes.BOOLEAN,
     defaultValue: true,
@@ -85,12 +90,14 @@ const User = sequelize.define('User', {
   hooks: {
     beforeCreate: async (user) => {
       if (user.password) {
-        user.password = await bcrypt.hash(user.password, 10);
+        user.password = await bcrypt.hash(user.password, 12);
       }
     },
     beforeUpdate: async (user) => {
       if (user.changed('password')) {
-        user.password = await bcrypt.hash(user.password, 10);
+        user.passwordChangedAt = new Date();
+        user.authVersion = Number(user.authVersion || 0) + 1;
+        user.password = await bcrypt.hash(user.password, 12);
       }
     }
   }
@@ -103,6 +110,7 @@ User.prototype.comparePassword = async function (candidatePassword) {
 User.prototype.toJSON = function () {
   const values = Object.assign({}, this.get());
   delete values.password;
+  delete values.authVersion;
   return values;
 };
 

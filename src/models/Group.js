@@ -13,9 +13,7 @@ const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 const User = require('./User');
 
-function generateJoinCode() {
-  return Math.random().toString(36).substring(2, 8).toUpperCase();
-}
+const {generateJoinCode}=require('../utils/groupCodes');
 
 const Group = sequelize.define('Group', {
   id: {
@@ -98,6 +96,7 @@ const GroupMember = sequelize.define('GroupMember', {
   }
 }, {
   tableName: 'group_members',
+  indexes: [{ unique: true, fields: ['group_id', 'student_id'] }],
   timestamps: false
 });
 

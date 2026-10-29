@@ -11,8 +11,8 @@ const FormData = require('form-data');
 const fs = require('fs');
 
 // Configuración
-const API_URL = process.env.API_URL || 'https://art-language-backend.railway.app/api';
-const TOKEN = process.argv[2]; // Pasar token como argumento
+const API_URL = process.env.API_URL || process.env.TEST_API_URL || 'http://127.0.0.1:5000/api';
+const TOKEN = process.env.TEST_ACCESS_TOKEN; // Token de prueba por variable de entorno, nunca como argumento público
 
 if (!TOKEN) {
   console.error('❌ Uso: node test-upload.js <JWT_TOKEN>');

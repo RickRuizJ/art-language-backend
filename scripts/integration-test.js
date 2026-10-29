@@ -1,11 +1,12 @@
+if(process.env.AL_EPHEMERAL_TEST_DB!=='1')throw new Error('Run this test only through the isolated tests/system runner.');
 /**
- * Flujo completo contra PostgreSQL REAL de pruebas (registro → grupo → links/archivos →
+ * Flujo aislado sobre el motor PostgreSQL embebido de pruebas (registro → grupo → links/archivos →
  * asignar → alumno abre/entrega → profesor revisa). Cloudinary se simula localmente.
- *   TEST_DATABASE_URL=postgresql://user:pass@localhost:5432/lms_test npm run test:integration
- * ⚠️ BORRA el esquema "public" de esa base; sólo corre si su nombre contiene "test".
+ *   npm run test:integration (el runner genera y destruye su base efímera)
+ * ⚠️ BORRA el esquema "public" de esa base; sólo corre con marcador de entorno efímero y URL loopback.
  */
 const testUrl = process.env.TEST_DATABASE_URL;
-if (!testUrl || !/\/[^/?]*test[^/?]*(\?|$)/i.test(testUrl)) {
+if (!testUrl || !/^postgres(?:ql)?:\/\/[^@]+@(127\.0\.0\.1|localhost):\d+\/[^?]*test/i.test(testUrl)) {
   console.error('Define TEST_DATABASE_URL apuntando a una base cuyo nombre contenga "test". No se ejecutó nada.');
   process.exit(2);
 }

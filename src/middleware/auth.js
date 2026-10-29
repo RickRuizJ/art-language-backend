@@ -1,65 +1,20 @@
-/**
- * middleware/auth.js
- *
- * BUGS FIXED:
- * 1. teacherRoutes.js and studentRoutes.js import { authenticate } — but the
- *    original file only exported the default function. This caused:
- *      TypeError: authenticate is not a function → 500 on every protected route.
- *
- * 2. assignmentRoutes.js imported { protect } — same crash.
- *
- * FIX: Export the middleware as the default export AND as named aliases
- *      `authenticate` and `protect` so every existing import style works.
- */
-
-const jwt = require('jsonwebtoken');
-const { User } = require('../models');
-
-const auth = async (req, res, next) => {
-  try {
-    const token = req.header('Authorization')?.replace('Bearer ', '');
-
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: 'Access denied. No token provided.'
-      });
-    }
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    const user = await User.findByPk(decoded.id);
-
-    if (!user || !user.isActive) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid token or user not active.'
-      });
-    }
-
-    req.user = user;
-    next();
-  } catch (error) {
-    if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid token.'
-      });
-    }
-    if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({
-        success: false,
-        message: 'Token expired.'
-      });
-    }
-    res.status(500).json({
-      success: false,
-      message: 'Server error during authentication.'
-    });
-  }
+'use strict';
+const jwt=require('jsonwebtoken');
+const {User}=require('../models');
+const auth=async(req,res,next)=>{
+ try{
+  const header=req.header('Authorization')||'';if(!/^Bearer [^ ]+$/.test(header))return res.status(401).json({success:false,message:'Authentication required.'});
+  const decoded=jwt.verify(header.slice(7),process.env.JWT_SECRET,{algorithms:['HS256']});
+  if(!require('../services/validation.service').UUID.test(decoded.id||''))return res.status(401).json({success:false,message:'Invalid session.'});
+  const user=await User.findByPk(decoded.id);
+  if(!user?.isActive||!['student','teacher','admin'].includes(user.role))return res.status(401).json({success:false,message:'Session expired. Please sign in.'});
+  const version=Number(user.authVersion||0);
+  const valid=decoded.ver!=null?(Number.isInteger(decoded.ver)&&decoded.ver===version):version===0&&(!user.passwordChangedAt||decoded.iat>Math.floor(new Date(user.passwordChangedAt).getTime()/1000));
+  if(!valid||(user.temporaryPasswordExpiresAt&&new Date(user.temporaryPasswordExpiresAt)<=new Date()))return res.status(401).json({success:false,message:'Session expired. Use sign in or password recovery.'});
+  req.user=user;
+  const path=req.originalUrl.split('?')[0];
+  if(user.mustChangePassword&&!['/api/auth/me','/api/auth/change-password'].includes(path))return res.status(403).json({success:false,code:'PASSWORD_CHANGE_REQUIRED',message:'Change your temporary password before continuing.'});
+  next();
+ }catch(e){res.status(['JsonWebTokenError','TokenExpiredError','NotBeforeError'].includes(e.name)?401:503).json({success:false,message:'Session could not be verified.'});}
 };
-
-// Named aliases used by different route files
-module.exports = auth;
-module.exports.authenticate = auth;  // used by teacherRoutes.js / studentRoutes.js
-module.exports.protect      = auth;  // used by assignmentRoutes.js / worksheetRoutes.js
+module.exports=auth;module.exports.authenticate=auth;module.exports.protect=auth;
